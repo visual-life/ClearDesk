@@ -25,9 +25,29 @@ namespace ClearDesk
             {
                 reopened.Show();
                 await Task.Delay(100);
-                check(!reopened.TestSurface.IsFrosted && !reopened.TestSurface.FrostEnabled, "reopening Dock migrates old wallpaper material to live transparency");
+                check(reopened.TestSurface.IsFrosted && reopened.TestLiveFrost && !reopened.TestSurface.FrostEnabled, "reopening Dock restores live frost without a static wallpaper layer");
+                var backdrop = reopened.TestBackdropHandle;
+                check(Native.IsWindowVisible(backdrop), "live blur surface is visible behind the shown Dock");
+                reopened.TestHover(.5);
+                await Task.Delay(200);
+                Native.RECT blurBounds;
+                Native.GetWindowRect(backdrop, out blurBounds);
+                var dpi = PresentationSource.FromVisual(reopened).CompositionTarget.TransformToDevice.M11;
+                check(Math.Abs((blurBounds.R - blurBounds.L) - reopened.TestPlateWidth * dpi) < 3, "native frost width tracks the magnified Dock plate");
+                reopened.Hide();
+                await Task.Delay(100);
+                check(!Native.IsWindowVisible(backdrop), "hiding Dock immediately hides its blur surface");
+                reopened.Show();
+                await Task.Delay(100);
+                check(Native.IsWindowVisible(backdrop), "restoring Dock also restores its blur surface");
+                reopened.TestMaterial("liquid");
+                check(!Native.IsWindow(backdrop) && !reopened.TestLiveFrost, "switching to glass destroys the blur window");
+                reopened.TestMaterial("frosted");
+                await Task.Delay(100);
+                check(reopened.TestLiveFrost, "switching back to frost recreates native blur");
             }
             finally { reopened.Close(); }
+            dock.TestMaterial("liquid");
 
             var menu = organizer.ContextMenu;
             var parent = (MenuItem)menu.Items[0];

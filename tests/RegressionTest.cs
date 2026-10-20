@@ -187,10 +187,10 @@ namespace ClearDesk
                 organizer.TestMaterial("frosted");
                 dock.TestMaterial("frosted");
                 await Task.Delay(300);
-                Check(organizer.TestSurface.IsFrosted && !dock.TestSurface.IsFrosted, "organizer retains frost while Dock always uses live transparency");
-                Check(organizer.TestSurface.FrostEnabled && !dock.TestSurface.FrostEnabled, "Dock does not allocate a wallpaper background over other windows");
+                Check(organizer.TestSurface.IsFrosted && dock.TestSurface.IsFrosted && dock.TestLiveFrost, "organizer uses wallpaper frost and Dock enables native live frost");
+                Check(organizer.TestSurface.FrostEnabled && !dock.TestSurface.FrostEnabled, "live Dock frost does not allocate a wallpaper background over other windows");
                 var saved = new JavaScriptSerializer().Deserialize<Settings>(File.ReadAllText(Program.Config));
-                Check(saved.Boxes.First().Material == "frosted" && saved.Widgets["dock"].Material == "liquid", "live Dock material and organizer frost persist independently");
+                Check(saved.Boxes.First().Material == "frosted" && saved.Widgets["dock"].Material == "frosted", "Dock frost choice and organizer frost both persist");
                 for (int i = 0; i < 3; i++)
                 {
                     organizer.TestMaterial("liquid");

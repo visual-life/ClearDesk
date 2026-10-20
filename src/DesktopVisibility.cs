@@ -129,6 +129,7 @@ namespace ClearDesk
                     if (popup.IsVisible)
                         popup.Dismiss();
             }
+            dock.SyncBackdrop();
         }
 
         public void Dispose()

@@ -633,7 +633,7 @@ namespace ClearDesk
                 Margin = new Thickness(0, 0, 0, 24)
             };
             title.Children.Add(Text("ClearDesk", 32));
-            Head(title, "清透桌面  /  个人精简版 1.6.1");
+            Head(title, "清透桌面  /  个人精简版 1.6.2");
             title.Children.Add(Text("把常用的留在桌面，让其余的安静下来。", 14, "#B7C7DA"));
             DockPanel.SetDock(title, Dock.Top);
             root.Children.Add(title);

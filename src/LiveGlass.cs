@@ -31,14 +31,16 @@ namespace ClearDesk
         Border washLayer, edge;
         string material;
         FrostedBackdrop backdrop;
+        readonly bool wallpaperFrost;
         readonly RadialGradientBrush light;
         Point target = new Point(.5, .1), current = new Point(.5, .1);
         double targetOpacity;
         bool active;
         TimeSpan last;
         public static int ActiveAnimations;
-        public GlassPane(string material)
+        public GlassPane(string material, bool wallpaperFrost = true)
         {
+            this.wallpaperFrost = wallpaperFrost;
             IsHitTestVisible = false;
             Children.Add(tint);
             this.material = material;
@@ -83,7 +85,7 @@ namespace ClearDesk
         {
             material = value;
             bool frosted = value == "frosted";
-            if (frosted && IsLoaded && backdrop == null)
+            if (frosted && wallpaperFrost && IsLoaded && backdrop == null)
                 backdrop = new FrostedBackdrop(this);
             if (!frosted && backdrop != null)
             {
@@ -91,7 +93,7 @@ namespace ClearDesk
                 backdrop = null;
             }
 
-            bool native = frosted && backdrop != null && backdrop.Enabled;
+            bool native = frosted && (!wallpaperFrost || (backdrop != null && backdrop.Enabled));
             tint.Background = new SolidColorBrush(Color.FromArgb((byte)(frosted ? (native ? 38 : 235) : 38), 24, 23, 24));
             if (washLayer != null)
                 washLayer.Opacity = frosted ? .12 : 1;

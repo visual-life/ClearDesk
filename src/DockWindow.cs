@@ -22,6 +22,7 @@ namespace ClearDesk
         List<DockEntry> entries = new List<DockEntry>();
         Border plate, separator, marker;
         GlassPane dockGlass;
+        DockBackdrop liveBackdrop;
         DesktopVisibility desktop;
         double cursor = double.NaN, baseSize;
         bool rendering, dragging, rebuilding;
@@ -37,15 +38,7 @@ namespace ClearDesk
             }
         }
 
-        static BoxData CreateState()
-        {
-            var state = Program.Widget("dock", 0, 0, 620, 140);
-            // Old frosted settings must not restore a wallpaper image over other windows.
-            state.Material = "liquid";
-            return state;
-        }
-
-        public DockWindow() : base(CreateState(), "Dock")
+        public DockWindow() : base(Program.Widget("dock", 0, 0, 620, 140), "Dock")
         {
             Frame.BorderThickness = new Thickness(0);
             Root.Children.Clear();
@@ -59,7 +52,7 @@ namespace ClearDesk
                 BorderThickness = new Thickness(1),
                 BorderBrush = GlassSurface.Highlight()
             };
-            dockGlass = new GlassPane(State.Material);
+            dockGlass = new GlassPane(State.Material, false);
             Surface = dockGlass;
             plate.Child = dockGlass;
             canvas.Children.Add(plate);
@@ -120,9 +113,15 @@ namespace ClearDesk
                 running.Dispose();
                 if (desktop != null)
                     desktop.Dispose();
+                if (liveBackdrop != null)
+                {
+                    liveBackdrop.Dispose();
+                    liveBackdrop = null;
+                }
             };
             Loaded += delegate
             {
+                UpdateBackdrop();
                 if (!Program.Rendering)
                 {
                     running.Start();
@@ -134,6 +133,7 @@ namespace ClearDesk
             {
                 ResetMagnification();
                 CancelDrag();
+                SyncBackdrop();
             };
             Deactivated += delegate
             {
@@ -143,6 +143,8 @@ namespace ClearDesk
             {
                 Root.Clip = null;
             };
+            plate.LayoutUpdated += delegate { SyncBackdrop(); };
+            LocationChanged += delegate { SyncBackdrop(); };
             PreviewMouseMove += DragMoveIcon;
             PreviewMouseLeftButtonUp += DropIcon;
             PreviewKeyDown += delegate (object s, KeyEventArgs e)
@@ -163,16 +165,48 @@ namespace ClearDesk
 
         protected override void Material(string material)
         {
-            base.Material("liquid");
+            base.Material(material);
+            UpdateBackdrop();
         }
 
         protected override ContextMenu Menu()
         {
             var menu = base.Menu();
-            menu.Items.RemoveAt(0);
-            menu.Items.Insert(0, new MenuItem { Header = "Dock · 实时透明", IsEnabled = false });
+            var materials = (MenuItem)menu.Items[0];
+            ((MenuItem)materials.Items[0]).Header = "玻璃 · 实时清透";
+            ((MenuItem)materials.Items[1]).Header = "磨砂 · 实时模糊";
             return menu;
         }
+
+        void UpdateBackdrop()
+        {
+            if (!IsLoaded || WasClosed) return;
+            if (State.Material == "frosted" && liveBackdrop == null)
+                liveBackdrop = new DockBackdrop();
+            if (State.Material != "frosted" && liveBackdrop != null)
+            {
+                liveBackdrop.Dispose();
+                liveBackdrop = null;
+            }
+            SyncBackdrop();
+        }
+
+        internal void SyncBackdrop()
+        {
+            if (liveBackdrop == null || WasClosed) return;
+            var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (!IsVisible || plate.ActualWidth < 1 || plate.ActualHeight < 1)
+            {
+                liveBackdrop.Sync(handle, Rect.Empty, 1, false);
+                return;
+            }
+            var topLeft = plate.PointToScreen(new Point());
+            var bottomRight = plate.PointToScreen(new Point(plate.ActualWidth, plate.ActualHeight));
+            liveBackdrop.Sync(handle, new Rect(topLeft, bottomRight), (bottomRight.X - topLeft.X) / plate.ActualWidth, true);
+        }
+
+        internal IntPtr TestBackdropHandle { get { return liveBackdrop == null ? IntPtr.Zero : liveBackdrop.Handle; } }
+        internal bool TestLiveFrost { get { return liveBackdrop != null && liveBackdrop.Enabled; } }
 
         public void Rebuild()
         {
