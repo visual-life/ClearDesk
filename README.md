@@ -4,6 +4,34 @@
 
 轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前版本 **1.5.2**，维护者 [visual-life](https://github.com/visual-life)。
 
+## 下载
+
+[下载 ClearDesk 1.5.2（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.5.2/ClearDesk-1.5.2-windows-x64-with-source.zip) · [版本说明与校验文件](https://github.com/visual-life/ClearDesk/releases/tag/v1.5.2)
+
+完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8。
+
+## 实际效果
+
+以下为 **1.5.2 在 Windows 上实际运行的截图**，使用独立演示配置。Dock 和启动台后方为展示壁纸的演示窗口；壁纸及第三方应用图标不属于 ClearDesk 自有素材。
+
+### 磨砂桌面收纳
+
+背景柔和模糊，图标与文字保持清晰，支持搜索与拖动整理。
+
+<img src="docs/images/organizer-frosted.jpg" width="442" alt="ClearDesk 1.5.2 磨砂收纳框实际运行截图">
+
+### 动态 Dock
+
+分割线区分固定项目与临时运行应用，下方小点表示正在运行。关闭临时应用时，图标淡出缩小，其余图标与背景平滑收拢。
+
+<img src="docs/images/dock-running-apps.jpg" width="701" alt="ClearDesk 1.5.2 Dock 固定项目、分割线和运行小点">
+
+### 实时透明启动台
+
+透明面板透出后方窗口，可搜索桌面项目；点击外部或按 Esc 收起。
+
+<img src="docs/images/launchpad-live.jpg" width="880" alt="ClearDesk 1.5.2 实时透明启动台实际运行截图">
+
 ## 功能
 
 - 桌面收纳：文件引用、搜索、网格／列表、拖动排序、调整大小和平滑滚动，不移动原文件。
