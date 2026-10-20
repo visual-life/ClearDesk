@@ -1,0 +1,12 @@
+{
+  "desktop_appearance": {"accent":"clear","color":"#00000000","show_peek":false,"show_line":false},
+  "visible_window_appearance": {"enabled":false},
+  "maximized_window_appearance": {"enabled":false},
+  "start_opened_appearance": {"enabled":false},
+  "search_opened_appearance": {"enabled":false},
+  "task_view_opened_appearance": {"enabled":false},
+  "battery_saver_appearance": {"enabled":false},
+  "hide_tray":true,
+  "disable_saving":true,
+  "verbosity":"off"
+}

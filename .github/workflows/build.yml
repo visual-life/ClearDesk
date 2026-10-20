@@ -1,0 +1,29 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: powershell
+        run: .\build.ps1
+      - name: Basic self-test
+        shell: powershell
+        run: .\scripts\test.ps1 -Suite Self
+      - name: Upload app without optional taskbar component
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClearDesk-windows-x64
+          path: dist/
+          if-no-files-found: error
