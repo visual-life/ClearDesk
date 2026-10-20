@@ -1,0 +1,69 @@
+using System;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
+namespace ClearDesk
+{
+    internal static class MenuThemeTests
+    {
+        internal static async Task Run(OrganizerWindow organizer, DockWindow dock, Action<bool, string> check)
+        {
+            var surface = dock.TestSurface;
+            var bitmap = new RenderTargetBitmap((int)Math.Ceiling(surface.ActualWidth), (int)Math.Ceiling(surface.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(surface);
+            var pixel = new byte[4];
+            bitmap.CopyPixels(new Int32Rect(bitmap.PixelWidth / 2, bitmap.PixelHeight / 2, 1, 1), pixel, 4, 0);
+            check(pixel[3] > 0 && pixel[3] < 128, "actual Dock plate leaves most background light visible instead of painting wallpaper");
+
+            Program.S.Widgets["dock"].Material = "frosted";
+            var reopened = new DockWindow();
+            try
+            {
+                reopened.Show();
+                await Task.Delay(100);
+                check(!reopened.TestSurface.IsFrosted && !reopened.TestSurface.FrostEnabled, "reopening Dock migrates old wallpaper material to live transparency");
+            }
+            finally { reopened.Close(); }
+
+            var menu = organizer.ContextMenu;
+            var parent = (MenuItem)menu.Items[0];
+            var clear = (MenuItem)parent.Items[0];
+            var frost = (MenuItem)parent.Items[1];
+            try
+            {
+                organizer.TestMaterial("frosted");
+                menu.PlacementTarget = organizer;
+                menu.Placement = PlacementMode.Center;
+                menu.IsOpen = true;
+                await Task.Delay(100);
+                parent.IsSubmenuOpen = true;
+                await Task.Delay(180);
+                parent.ApplyTemplate();
+                frost.ApplyTemplate();
+                var panel = (Border)parent.Template.FindName("SubmenuSurface", parent);
+                var popup = (Popup)parent.Template.FindName("PART_Popup", parent);
+                var bg = ((SolidColorBrush)panel.Background).Color;
+                var fg = ((SolidColorBrush)frost.Foreground).Color;
+                check(popup.IsOpen && bg.R < 50 && bg.G < 50 && fg.R > 220, "open material submenu has explicit dark surface and readable bright text");
+                check(frost.IsChecked && !clear.IsChecked && ((UIElement)frost.Template.FindName("Check", frost)).Visibility == Visibility.Visible, "material submenu shows current selection with the custom checkmark");
+                parent.IsSubmenuOpen = false;
+                menu.IsOpen = false;
+                organizer.TestMaterial("liquid");
+                menu.IsOpen = true;
+                parent.IsSubmenuOpen = true;
+                await Task.Delay(100);
+                check(clear.IsChecked && !frost.IsChecked, "reopened submenu updates selection after material changes");
+            }
+            finally
+            {
+                parent.IsSubmenuOpen = false;
+                menu.IsOpen = false;
+                organizer.TestMaterial("liquid");
+            }
+        }
+    }
+}

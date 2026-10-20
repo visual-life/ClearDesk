@@ -187,10 +187,10 @@ namespace ClearDesk
                 organizer.TestMaterial("frosted");
                 dock.TestMaterial("frosted");
                 await Task.Delay(300);
-                Check(organizer.TestSurface.IsFrosted && dock.TestSurface.IsFrosted, "organizer and actual Dock plate switch to frosted");
-                Check(organizer.TestSurface.FrostEnabled && dock.TestSurface.FrostEnabled, "frosted wallpaper background available for both panels");
+                Check(organizer.TestSurface.IsFrosted && !dock.TestSurface.IsFrosted, "organizer retains frost while Dock always uses live transparency");
+                Check(organizer.TestSurface.FrostEnabled && !dock.TestSurface.FrostEnabled, "Dock does not allocate a wallpaper background over other windows");
                 var saved = new JavaScriptSerializer().Deserialize<Settings>(File.ReadAllText(Program.Config));
-                Check(saved.Boxes.First().Material == "frosted" && saved.Widgets["dock"].Material == "frosted", "material choices persist per component");
+                Check(saved.Boxes.First().Material == "frosted" && saved.Widgets["dock"].Material == "liquid", "live Dock material and organizer frost persist independently");
                 for (int i = 0; i < 3; i++)
                 {
                     organizer.TestMaterial("liquid");
@@ -200,7 +200,7 @@ namespace ClearDesk
                     organizer.TestMaterial("frosted");
                     dock.TestMaterial("frosted");
                     await Task.Delay(60);
-                    Check(FrostedBackdrop.ActiveCount == 2, "frost switch creates exactly two surfaces cycle " + i);
+                    Check(FrostedBackdrop.ActiveCount == 1, "only organizer subscribes to wallpaper changes cycle " + i);
                 }
 
                 Program.Launchpad();
@@ -234,6 +234,7 @@ namespace ClearDesk
                 await DockBehaviorTest.Run(dock, Check);
                 await DockTransitionsTest.Run(dock, Check);
                 await MusicTests.Run(Check);
+                await MenuThemeTests.Run(organizer, dock, Check);
                 results.Add("INFO: visibility uses real window handles with deterministic dispatch; foreground hook registration is self-tested, interactive browser switching was not rechecked.");
                 visibility.Dispose();
                 visibility = null;

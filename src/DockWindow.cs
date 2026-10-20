@@ -37,7 +37,15 @@ namespace ClearDesk
             }
         }
 
-        public DockWindow() : base(Program.Widget("dock", 0, 0, 620, 140), "Dock")
+        static BoxData CreateState()
+        {
+            var state = Program.Widget("dock", 0, 0, 620, 140);
+            // Old frosted settings must not restore a wallpaper image over other windows.
+            state.Material = "liquid";
+            return state;
+        }
+
+        public DockWindow() : base(CreateState(), "Dock")
         {
             Frame.BorderThickness = new Thickness(0);
             Root.Children.Clear();
@@ -151,6 +159,19 @@ namespace ClearDesk
                     CancelDrag();
             };
             Rebuild();
+        }
+
+        protected override void Material(string material)
+        {
+            base.Material("liquid");
+        }
+
+        protected override ContextMenu Menu()
+        {
+            var menu = base.Menu();
+            menu.Items.RemoveAt(0);
+            menu.Items.Insert(0, new MenuItem { Header = "Dock · 实时透明", IsEnabled = false });
+            return menu;
         }
 
         public void Rebuild()

@@ -506,6 +506,7 @@ namespace ClearDesk
  <Style TargetType='MenuItem'><Setter Property='Foreground' Value='White'/><Setter Property='Padding' Value='12,7'/></Style>
  </ResourceDictionary>";
             App.Resources = (ResourceDictionary)System.Windows.Markup.XamlReader.Parse(x);
+            MenuTheme.Apply(App.Resources);
         }
 
         public static TextBlock Text(string s, double size = 14, string color = "#F4F6FC")
@@ -632,7 +633,7 @@ namespace ClearDesk
                 Margin = new Thickness(0, 0, 0, 24)
             };
             title.Children.Add(Text("ClearDesk", 32));
-            Head(title, "清透桌面  /  个人精简版 1.6.0");
+            Head(title, "清透桌面  /  个人精简版 1.6.1");
             title.Children.Add(Text("把常用的留在桌面，让其余的安静下来。", 14, "#B7C7DA"));
             DockPanel.SetDock(title, Dock.Top);
             root.Children.Add(title);
