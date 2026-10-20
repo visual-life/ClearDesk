@@ -2,13 +2,23 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.6.0**（公开发行包仍为 1.5.2），维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前版本 **1.6.0**，维护者 [visual-life](https://github.com/visual-life)。
 
 ## 下载
 
-[下载 ClearDesk 1.5.2（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.5.2/ClearDesk-1.5.2-windows-x64-with-source.zip) · [版本说明与校验文件](https://github.com/visual-life/ClearDesk/releases/tag/v1.5.2)
+[下载 ClearDesk 1.6.0（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.6.0/ClearDesk-1.6.0-windows-x64-with-source.zip) · [版本说明与校验文件](https://github.com/visual-life/ClearDesk/releases/tag/v1.6.0)
 
 完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8。
+
+## 1.6.0 更新重点
+
+- 音乐卡片连接桌面音乐客户端，显示歌曲信息，并提供上一首、播放／暂停、下一首。支持自动或指定播放器，控制只发给当前选择的客户端。
+- 将默认白色播放器下拉框换为深色圆角菜单，调整封面、文字、进度条和控制按钮；保留本地音乐播放。
+- QQ 音乐已实测封面、进度和切歌。网易云音乐 3.1.1 新增无障碍控件兼容模式，已实测最小化后切歌；该模式没有封面，后台进度可能暂时停住。
+- 酷狗音乐已实现系统媒体会话支持，但本机未安装，尚未实测。外部音乐连接需要 Windows 10 1809 或更新版本。
+- 本地完整回归 **94 项通过**，覆盖音乐控制和原有桌面功能。
+
+完整变更、实测版本和升级方法见 [1.6.0 发行说明](docs/releases/1.6.0.md)。
 
 ## 实际效果
 
@@ -38,6 +48,10 @@
 
 <img src="docs/images/music-player.jpg" width="360" alt="ClearDesk 1.6.0 QQ 音乐卡片实测截图">
 <img src="docs/images/music-source-menu.jpg" width="192" alt="ClearDesk 1.6.0 深色播放器选择菜单">
+
+网易云音乐兼容模式实际截图（音符为无封面时的占位图）：
+
+<img src="docs/images/music-netease.jpg" width="360" alt="ClearDesk 1.6.0 网易云音乐兼容模式实际截图">
 
 ## 功能
 
