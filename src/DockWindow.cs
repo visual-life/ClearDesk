@@ -12,7 +12,7 @@ using System.Windows.Media.Animation;
 
 namespace ClearDesk
 {
-    public class DockWindow : GlassWindow
+    public partial class DockWindow : GlassWindow
     {
         readonly Canvas canvas = new Canvas();
         readonly List<Button> buttons = new List<Button>();
@@ -89,6 +89,8 @@ namespace ClearDesk
             };
             MouseMove += delegate (object s, MouseEventArgs e)
             {
+                if (transitioning)
+                    return;
                 cursor = e.GetPosition(canvas).X;
                 StartFrames();
             };
@@ -106,6 +108,7 @@ namespace ClearDesk
             Closed += delegate
             {
                 StopFrames();
+                FinishTransition(false);
                 running.Dispose();
                 if (desktop != null)
                     desktop.Dispose();
@@ -154,10 +157,21 @@ namespace ClearDesk
         {
             if (rebuilding || WasClosed)
                 return;
+            if (transitioning)
+            {
+                rebuildPending = true;
+                return;
+            }
+
             rebuilding = true;
             try
             {
                 StopFrames();
+                var previous = CaptureItems();
+                double previousWidth = Width, previousHeight = Height;
+                double previousPlateWidth = plate.Width, previousPlateHeight = plate.Height;
+                double previousSeparatorX = Left + Canvas.GetLeft(separator);
+                bool previousSeparator = separatorBefore >= 0;
                 for (int i = canvas.Children.Count - 1; i >= 1; i--)
                     canvas.Children.RemoveAt(i);
                 buttons.Clear();
@@ -170,9 +184,12 @@ namespace ClearDesk
                 int count = entries.Count + 1;
                 double gap = separatorBefore >= 0 ? 18 : 0;
                 baseSize = Math.Min(Program.S.DockSize, Math.Max(16, (wa.Width - 180 - gap) / count - 9));
-                Width = Math.Min(wa.Width - 20, 40 + count * (baseSize + 9) + 130 + gap);
-                Height = baseSize * 1.8 + 46;
-                State.Height = Height;
+                targetWidth = Math.Min(wa.Width - 20, 40 + count * (baseSize + 9) + 130 + gap);
+                targetHeight = baseSize * 1.8 + 46;
+                bool animate = IsLoaded && IsVisible && previous.Count > 0 && ItemsChanged(previous);
+                Width = animate ? Math.Max(previousWidth, targetWidth) : targetWidth;
+                Height = animate ? Math.Max(previousHeight, targetHeight) : targetHeight;
+                State.Height = targetHeight;
                 Left = wa.Left + (wa.Width - Width) / 2;
                 Top = wa.Bottom - Height - Program.S.DockOffset;
                 AddIcon(null);
@@ -182,6 +199,8 @@ namespace ClearDesk
                     canvas.Children.Add(separator);
                 canvas.Children.Add(marker);
                 LayoutIcons();
+                if (animate)
+                    BeginTransition(previous, previousPlateWidth, previousPlateHeight, previousSeparator, previousSeparatorX);
             }
             finally
             {
@@ -251,6 +270,7 @@ namespace ClearDesk
             {
                 if (dragging)
                     return;
+                FinishTransition(true);
                 ResetMagnification();
                 if (entry == null)
                     Program.Launchpad();
@@ -398,7 +418,7 @@ namespace ClearDesk
 
         void StartFrames()
         {
-            if (rendering || WasClosed || !IsVisible)
+            if (rendering || transitioning || WasClosed || !IsVisible)
                 return;
             rendering = true;
             lastFrame = TimeSpan.Zero;
@@ -416,6 +436,15 @@ namespace ClearDesk
 
         internal void ResetMagnification()
         {
+            if (transitioning)
+            {
+                cursor = double.NaN;
+                dockGlass.ResetPointer();
+                if (!IsVisible)
+                    FinishTransition(true);
+                return;
+            }
+
             StopFrames();
             cursor = double.NaN;
             for (int i = 0; i < sizes.Count; i++)
@@ -495,6 +524,8 @@ namespace ClearDesk
 
         void DragMoveIcon(object sender, MouseEventArgs e)
         {
+            if (transitioning)
+                return;
             if (dragSource == null || e.LeftButton != MouseButtonState.Pressed)
                 return;
             Point p = e.GetPosition(canvas);
