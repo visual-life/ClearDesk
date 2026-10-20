@@ -233,6 +233,7 @@ namespace ClearDesk
                 Check(FrostedBackdrop.ActiveCount == 0, "clock backdrop released on close");
                 await DockBehaviorTest.Run(dock, Check);
                 await DockTransitionsTest.Run(dock, Check);
+                await MusicTests.Run(Check);
                 results.Add("INFO: visibility uses real window handles with deterministic dispatch; foreground hook registration is self-tested, interactive browser switching was not rechecked.");
                 visibility.Dispose();
                 visibility = null;

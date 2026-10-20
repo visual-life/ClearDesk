@@ -35,6 +35,7 @@ namespace ClearDesk
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
         public string City = "上海";
+        public string MusicSource = "auto";
         public List<BoxData> Boxes = new List<BoxData>();
         public List<string> Pins = new List<string>();
         public Dictionary<string, BoxData> Widgets = new Dictionary<string, BoxData>();
@@ -631,7 +632,7 @@ namespace ClearDesk
                 Margin = new Thickness(0, 0, 0, 24)
             };
             title.Children.Add(Text("ClearDesk", 32));
-            Head(title, "清透桌面  /  个人精简版 1.5.2");
+            Head(title, "清透桌面  /  个人精简版 1.6.0");
             title.Children.Add(Text("把常用的留在桌面，让其余的安静下来。", 14, "#B7C7DA"));
             DockPanel.SetDock(title, Dock.Top);
             root.Children.Add(title);
@@ -832,6 +833,7 @@ namespace ClearDesk
                 if (t.Boxes[0].Title != "测试中文" || t.Boxes[0].Items[0] != s.Boxes[0].Items[0])
                     throw new Exception("Config round-trip");
                 results.Add("PASS: Chinese/path config round-trip");
+                MusicTests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 var d = new DateTime(2026, 10, 19);
                 string lunar = CalendarWindow.Lunar(d);
                 if (string.IsNullOrEmpty(lunar))

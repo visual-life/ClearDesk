@@ -2,7 +2,7 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前版本 **1.5.2**，维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.6.0**（公开发行包仍为 1.5.2），维护者 [visual-life](https://github.com/visual-life)。
 
 ## 下载
 
@@ -32,6 +32,13 @@
 
 <img src="docs/images/launchpad-live.jpg" width="880" alt="ClearDesk 1.5.2 实时透明启动台实际运行截图">
 
+### 音乐卡片（1.6.0）
+
+深色圆角播放器菜单、清晰的歌曲信息和图形控制按钮。QQ 音乐已实测封面、进度和切歌；网易云 3.1.1 已实测兼容模式和后台切歌。酷狗接入系统媒体会话，尚未实测。详细限制见 [音乐连接说明](docs/MUSIC.md)。
+
+<img src="docs/images/music-player.jpg" width="360" alt="ClearDesk 1.6.0 QQ 音乐卡片实测截图">
+<img src="docs/images/music-source-menu.jpg" width="192" alt="ClearDesk 1.6.0 深色播放器选择菜单">
+
 ## 功能
 
 - 桌面收纳：文件引用、搜索、网格／列表、拖动排序、调整大小和平滑滚动，不移动原文件。
@@ -41,11 +48,12 @@
 - 启动台：实时透出后方窗口，支持搜索和添加项目，点击外部或按 Esc 收起。
 - Dock 自动显隐：同屏前台窗口最大化／全屏时隐藏，最小化后自动检查并恢复。
 - 时钟、性能、日历／农历、天气和音乐组件；天气联网需要在设置中主动开启。
+- 音乐连接：自动或指定 QQ 音乐、网易云音乐、酷狗音乐；上一首、播放／暂停、下一首定向控制，保留本地音乐播放。
 - 可选任务栏透明功能，通过独立的官方 TranslucentTB 组件实现。
 
 ## 本地构建
 
-需要 Windows x64、Windows PowerShell 5.1 或 PowerShell 7，以及 .NET Framework 4.8。
+需要 Windows x64、Windows PowerShell 5.1 或 PowerShell 7，以及 .NET Framework 4.8、Windows 10/11 SDK（17763 或更新版本）。
 
 ```powershell
 git clone https://github.com/visual-life/ClearDesk.git
