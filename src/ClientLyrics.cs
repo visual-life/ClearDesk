@@ -51,17 +51,21 @@ namespace ClearDesk
                 }
             }
         }
-        static string Normalize(string value)
+        internal static string Normalize(string value)
         {
             return Regex.Replace((value??"").Normalize(NormalizationForm.FormKC),@"\s+","").ToLowerInvariant();
         }
         static string FileNameText(string value) { return Regex.Replace(value??"", "[<>:\"/\\\\|?*]", "_"); }
-        static string Artists(string value)
+        internal static string Artists(string value)
         {
             return string.Join("/",Regex.Split(Normalize(value),@"[、/&,;_，；]+").Where(x=>x.Length>0).OrderBy(x=>x,StringComparer.Ordinal));
         }
         static bool DurationMatches(MusicSnapshot song,double duration)
         { return song.Duration.TotalSeconds>=1 && Math.Abs(song.Duration.TotalSeconds-duration)<=2; }
+        // NetEase compatibility mode often cannot read the timeline (minimized / background), so Duration is 0.
+        // Unknown duration must not block an otherwise exact title+artist match.
+        static bool DurationCompatible(MusicSnapshot song,double duration)
+        { return song.Duration.TotalSeconds<1 || duration<1 || Math.Abs(song.Duration.TotalSeconds-duration)<=3; }
         internal static bool QQMatches(MusicSnapshot song,string path)
         {
             string name=Path.GetFileName(path);
@@ -93,9 +97,76 @@ namespace ClearDesk
                 token.ThrowIfCancellationRequested(); if(++examined>10000) return null;
                 if(QQMatches(song,file)) { matches.Add(file); if(matches.Count>1) return null; }
             }
+            if(matches.Count==0)
+            {
+                // Fuzzy pass: cleaned title ("(Explicit)", "(feat. …)" removed), any shared artist, closest duration.
+                string best=null; int bestScore=-1; bool tie=false; examined=0;
+                foreach(string file in Directory.EnumerateFiles(qqRoot,"*_qm.qrc"))
+                {
+                    token.ThrowIfCancellationRequested(); if(++examined>10000) break;
+                    int score=QQFuzzyScore(song,file);
+                    if(score>bestScore) { best=file; bestScore=score; tie=false; } else if(score==bestScore && score>=0) tie=true;
+                }
+                if(best==null || bestScore<0 || tie) return null;
+                matches.Add(best);
+            }
             if(matches.Count!=1) return null;
             var result=ParseQrc(QrcDecode(ReadBounded(matches[0]),token));
             result.Credit="QQ 音乐 · 客户端歌词"; return result;
+        }
+        // ---- fuzzy matching shared by cache and online providers ----
+        internal static string CleanTitle(string value)
+        {
+            string t=(value??"").Normalize(NormalizationForm.FormKC);
+            // Drop bracketed suffixes: (Explicit), (feat. X), [Remastered], （伴奏）, 【Live】 …
+            t=Regex.Replace(t,@"\s*[\(\[（【][^\)\]）】]*[\)\]）】]","");
+            t=Regex.Replace(t,@"\s+(feat\.?|ft\.?|featuring)\s+.*$","",RegexOptions.IgnoreCase);
+            t=Regex.Replace(t,@"\s+-\s+(explicit|clean|remaster(ed)?.*)$","",RegexOptions.IgnoreCase);
+            t=Normalize(t);
+            return t.Length>0?t:Normalize(value);
+        }
+        internal static string[] ArtistList(string value)
+        {
+            return Regex.Split((value??"").Normalize(NormalizationForm.FormKC),@"\s*(?:[、/&,;_，；×]|\s+(?:feat\.?|ft\.?|x|and|with)\s+)\s*",RegexOptions.IgnoreCase)
+                .Select(Normalize).Where(x=>x.Length>0).Distinct().ToArray();
+        }
+        // Higher is better; -1 means "not the same song".
+        internal static int MatchScore(MusicSnapshot song,string title,string artists,double durationSeconds)
+        {
+            int score;
+            if(Normalize(title)==Normalize(song.Title)) score=60;
+            else if(CleanTitle(title)==CleanTitle(song.Title)) score=40;
+            else return -1;
+            var want=ArtistList(song.Artist); var have=ArtistList(artists);
+            if(want.Length>0 && have.Length>0)
+            {
+                int shared=want.Count(have.Contains);
+                if(shared==0) return -1;
+                score+=shared==want.Length?30:15;
+                if(want[0]==have[0]) score+=5; // main artist first
+            }
+            if(song.Duration.TotalSeconds>=1 && durationSeconds>=1)
+            {
+                double diff=Math.Abs(song.Duration.TotalSeconds-durationSeconds);
+                if(diff>8) return -1;
+                score+=diff<=2?20:diff<=5?10:0;
+            }
+            return score;
+        }
+        internal static int QQFuzzyScore(MusicSnapshot song,string path)
+        {
+            string name=Path.GetFileName(path);
+            if(!name.EndsWith("_qm.qrc",StringComparison.OrdinalIgnoreCase)) return -1;
+            name=name.Substring(0,name.Length-7);
+            int best=-1;
+            foreach(Match middle in Regex.Matches(name,@" - (\d+) - "))
+            {
+                double duration; if(!double.TryParse(middle.Groups[1].Value,out duration)) continue;
+                string prefix=name.Substring(0,middle.Index);
+                for(int split=prefix.IndexOf(" - ",StringComparison.Ordinal);split>=0;split=prefix.IndexOf(" - ",split+3,StringComparison.Ordinal))
+                    best=Math.Max(best,MatchScore(song,prefix.Substring(split+3),prefix.Substring(0,split),duration));
+            }
+            return best;
         }
         internal static IEnumerable<Dictionary<string,object>> Tracks(object root)
         {
@@ -103,7 +174,7 @@ namespace ClearDesk
             if(map!=null)
             {
                 object list;
-                if(map.TryGetValue("list",out list) || map.TryGetValue("queue",out list)) root=list;
+                if(map.TryGetValue("list",out list) || map.TryGetValue("queue",out list) || map.TryGetValue("data",out list) || map.TryGetValue("tracks",out list)) root=list;
             }
             var array=root as IEnumerable; if(array==null || root is string || root is Dictionary<string,object>) yield break;
             foreach(object item in array)
@@ -120,9 +191,10 @@ namespace ClearDesk
         internal static MusicSnapshot NetEaseTrack(Dictionary<string,object> track)
         {
             object value; var names=new List<string>();
-            if(track.TryGetValue("artists",out value) && value is IEnumerable)
+            if((track.TryGetValue("artists",out value) || track.TryGetValue("ar",out value)) && value is IEnumerable && !(value is string))
                 foreach(object artist in (IEnumerable)value) { string name=Str(artist as Dictionary<string,object>,"name"); if(name.Length>0) names.Add(name); }
-            double milliseconds; double.TryParse(Str(track,"duration"),NumberStyles.Float,CultureInfo.InvariantCulture,out milliseconds);
+            string ms=Str(track,"duration"); if(ms.Length==0) ms=Str(track,"dt");
+            double milliseconds; double.TryParse(ms,NumberStyles.Float,CultureInfo.InvariantCulture,out milliseconds);
             return new MusicSnapshot { Source="netease",Title=Str(track,"name"),Artist=string.Join("/",names),Duration=TimeSpan.FromMilliseconds(Math.Max(0,Math.Min(86400000,milliseconds))) };
         }
         LyricsDocument ReadNetEase(MusicSnapshot song,CancellationToken token)
@@ -137,8 +209,8 @@ namespace ClearDesk
                     foreach(var track in Tracks(Json(path,4*Limit)))
                     {
                         token.ThrowIfCancellationRequested(); var candidate=NetEaseTrack(track);
-                        if(Normalize(candidate.Title)!=Normalize(song.Title) || Artists(candidate.Artist)!=Artists(song.Artist) || !DurationMatches(song,candidate.Duration.TotalSeconds)) continue;
-                        object album; track.TryGetValue("album",out album);
+                        if(Normalize(candidate.Title)!=Normalize(song.Title) || Artists(candidate.Artist)!=Artists(song.Artist) || !DurationCompatible(song,candidate.Duration.TotalSeconds)) continue;
+                        object album; if(!track.TryGetValue("album",out album)) track.TryGetValue("al",out album);
                         if(!string.IsNullOrWhiteSpace(song.Album) && Normalize(song.Album)!=Normalize(Str(album as Dictionary<string,object>,"name"))) continue;
                         string id=Str(track,"id"); if(Regex.IsMatch(id,@"^\d{1,20}$")) ids.Add(id);
                     }
@@ -146,20 +218,49 @@ namespace ClearDesk
                 catch(OperationCanceledException) { throw; }
                 catch { } // Another metadata file may still contain a valid mapping.
             }
+            // Several matching IDs: refuse to guess (online sources are tried next).
             if(ids.Count!=1) return null;
             string lyric=Path.Combine(neteaseRoot,"lyric",ids.First()); if(!File.Exists(lyric)) return null;
-            var data=Json(lyric) as Dictionary<string,object>; object lrc;
-            if(data==null || !data.TryGetValue("lrc",out lrc)) return null;
-            var result=LyricsDocument.Parse(Str(lrc as Dictionary<string,object>,"lyric"));
+            LyricsDocument result=ParseNetEaseLyric(Encoding.UTF8.GetString(ReadBounded(lyric)).TrimStart('\uFEFF'));
+            if(result==null || string.IsNullOrWhiteSpace(result.Plain)) return null;
             result.Credit="网易云音乐 · 客户端歌词"; return result;
+        }
+        // Accepts {"lrc":{"lyric":...}} (client cache and public API) or a raw LRC text.
+        internal static LyricsDocument ParseNetEaseLyric(string text)
+        {
+            if(string.IsNullOrWhiteSpace(text)) return null;
+            string t=text.TrimStart();
+            if(t.StartsWith("{"))
+            {
+                var data=new JavaScriptSerializer { MaxJsonLength=Limit,RecursionLimit=64 }.DeserializeObject(t) as Dictionary<string,object>; object lrc;
+                if(data==null) return null;
+                if(data.TryGetValue("nolyric",out lrc) && lrc is bool && (bool)lrc) return new LyricsDocument { Message="纯音乐，请欣赏",Plain="纯音乐" };
+                if(!data.TryGetValue("lrc",out lrc)) return null;
+                string body=lrc is string?(string)lrc:Str(lrc as Dictionary<string,object>,"lyric");
+                return string.IsNullOrWhiteSpace(body)?null:LyricsDocument.Parse(body);
+            }
+            // Raw LRC only when it really has timestamps; anything else is a partial/corrupt cache.
+            var raw=LyricsDocument.Parse(text);
+            return raw.Lines.Count>0?raw:null;
         }
         internal static LyricsDocument ParseQrc(string xml)
         {
             if(xml==null || xml.Length>Limit) throw new InvalidDataException("歌词内容过大。");
             string text=null;
+            try
+            {
             // The QRC attribute contains literal newlines; XML attribute normalization would erase line boundaries.
             using(var reader=new XmlTextReader(new StringReader(xml.TrimStart('\uFEFF'))) { DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,Normalization=false })
                 while(reader.Read()) if(reader.NodeType==XmlNodeType.Element && reader.Name=="Lyric_1") { text=reader.GetAttribute("LyricContent"); break; }
+            }
+            catch(XmlException)
+            {
+                // QQ writes some lyrics (e.g. explicit English songs with "<(" or "&") without escaping,
+                // which makes the XML invalid. Pull the attribute out textually instead.
+                var found=Regex.Match(xml,"LyricContent=\"([\\s\\S]*)\"\\s*/>");
+                if(!found.Success) throw;
+                text=System.Net.WebUtility.HtmlDecode(found.Groups[1].Value);
+            }
             if(text==null) throw new InvalidDataException("没有歌词内容。");
             var result=new LyricsDocument();
             foreach(string raw in text.Split(new[]{'\r','\n'},StringSplitOptions.RemoveEmptyEntries))

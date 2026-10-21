@@ -49,7 +49,12 @@ namespace ClearDesk
             lyricMenu=Item("显示歌词",delegate { SetLyrics(!Program.S.MusicLyrics); }); lyricMenu.IsCheckable=true;
             ContextMenu.Items.Insert(0,lyricMenu);
             ContextMenu.Items.Insert(1,Item("导入当前歌曲歌词…",ImportLyrics));
-            ContextMenu.Items.Insert(2,Item("重新匹配歌词",delegate { if(lyricView!=null) { lyrics.Invalidate(lyricView); Program.S.MusicLyricFiles.Remove(LyricsProvider.TrackKey(lyricView)); Program.Save(); } lyricKey=null; lyricDocument=null; Render(); }));
+            ContextMenu.Items.Insert(2,Item("以同步模式重启网易云",delegate
+            {
+                if(MessageBox.Show("将关闭并重新打开网易云音乐（附加 --force-renderer-accessibility），以便读取播放进度、切歌和跳转。当前播放会中断，是否继续？","网易云同步模式",MessageBoxButton.OKCancel)!=MessageBoxResult.OK) return;
+                string error=NetEaseMusic.RestartWithAccessibility(); if(error!=null) MessageBox.Show(error,"网易云同步模式");
+            }));
+            ContextMenu.Items.Insert(3,Item("重新匹配歌词",delegate { if(lyricView!=null) { lyrics.Invalidate(lyricView); Program.S.MusicLyricFiles.Remove(LyricsProvider.TrackKey(lyricView)); Program.Save(); } lyricKey=null; lyricDocument=null; Render(); }));
         }
         void SetLyrics(bool enabled)
         {

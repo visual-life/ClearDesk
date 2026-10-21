@@ -16,7 +16,7 @@ namespace ClearDesk
     {
         public string Key, Source, LocalPath, Title = "", Artist = "", Album = "", Message = "";
         public BitmapSource Cover;
-        public bool Playing, CanPrevious, CanToggle, CanNext;
+        public bool Playing, CanPrevious, CanToggle, CanNext, CanSeek;
         public TimeSpan Position, Duration;
     }
 
@@ -24,6 +24,8 @@ namespace ClearDesk
     {
         Task<MusicSnapshot> ReadAsync(string source);
         Task<bool> CommandAsync(string key, MusicCommand command);
+        // Jump the selected session to an absolute position (from the start of the track).
+        Task<bool> SeekAsync(string key, TimeSpan position);
     }
 
     internal static class MusicSources
@@ -164,7 +166,7 @@ namespace ClearDesk
                         Title = properties.Title ?? "", Artist = properties.Artist ?? "", Album = properties.AlbumTitle ?? "", Cover = cover,
                         Playing = playing, CanPrevious = controls.IsPreviousEnabled,
                         CanToggle = controls.IsPlayPauseToggleEnabled || (playing ? controls.IsPauseEnabled : controls.IsPlayEnabled),
-                        CanNext = controls.IsNextEnabled, Duration = duration > TimeSpan.Zero ? duration : TimeSpan.Zero,
+                        CanNext = controls.IsNextEnabled, CanSeek = duration > TimeSpan.Zero && (controls.IsPlaybackPositionEnabled || MusicSources.Identify(target.SourceAppUserModelId) == "qq"), Duration = duration > TimeSpan.Zero ? duration : TimeSpan.Zero,
                         Position = MusicSources.ClampPosition(position, duration),
                         Message = string.IsNullOrWhiteSpace(properties.Title) ? "客户端尚未提供歌曲信息" : ""
                     };
@@ -245,6 +247,33 @@ namespace ClearDesk
                     if (info.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
                         return info.Controls.IsPauseEnabled && await Await(target.TryPauseAsync());
                     return info.Controls.IsPlayEnabled && await Await(target.TryPlayAsync());
+                }).ConfigureAwait(false);
+            }
+            catch { return false; }
+        }
+
+        public async Task<bool> SeekAsync(string key, TimeSpan position)
+        {
+            if (position < TimeSpan.Zero) position = TimeSpan.Zero;
+            if (!disposed && key != null && key == compatibilityKey)
+                return await netease.SeekAsync(key, position).ConfigureAwait(false);
+            if (disposed || key == null || key != selectedKey || selected == null) return false;
+            var target = selected;
+            try
+            {
+                return await Task.Run(async delegate
+                {
+                    if (disposed || !manager.GetSessions().Any(s => ReferenceEquals(s, target))) return false;
+                    var timeline = target.GetTimelineProperties();
+                    if (!target.GetPlaybackInfo().Controls.IsPlaybackPositionEnabled)
+                    {
+                        // QQ Music: SMTC seeking disabled; click its own progress bar instead.
+                        var length = timeline.EndTime - timeline.StartTime;
+                        if (MusicSources.Identify(target.SourceAppUserModelId) != "qq" || length <= TimeSpan.Zero) return false;
+                        return QQMusicSeek.Seek(position.TotalSeconds / length.TotalSeconds);
+                    }
+                    // SMTC positions are relative to StartTime; the API takes 100-ns ticks.
+                    return await Await(target.TryChangePlaybackPositionAsync((timeline.StartTime + position).Ticks));
                 }).ConfigureAwait(false);
             }
             catch { return false; }

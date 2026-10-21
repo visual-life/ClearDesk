@@ -56,11 +56,12 @@ namespace ClearDesk
             }
             int downloads=0,reads=0; bool available=false;
             var provider=new LyricsProvider((url,token)=> { downloads++; return Task.FromResult<string>(null); },(value,token)=> { reads++; return available?LyricsDocument.Parse("[00:01]Late client cache"):null; });
-            await provider.ReadAsync(netSong,CancellationToken.None); available=true;
+            await provider.ReadAsync(netSong,CancellationToken.None); int firstDownloads=downloads; available=true;
             var direct=await provider.ReadAsync(netSong,CancellationToken.None); await provider.ReadAsync(netSong,CancellationToken.None);
-            check(direct.FromClient && downloads==1 && reads==2,"late client cache replaces a cached online miss without additional network requests");
+            // 1.9.1: one miss may query several online sources (NetEase, QQ, LRCLIB); later reads must add none.
+            check(direct.FromClient && firstDownloads>=1 && downloads==firstDownloads && reads==2,"late client cache replaces a cached online miss without additional network requests");
             available=false; var other=new MusicSnapshot { Source="qq",Title=netSong.Title,Artist=netSong.Artist,Album=netSong.Album,Duration=netSong.Duration };
-            check(!(await provider.ReadAsync(other,CancellationToken.None)).FromClient && downloads==2,"provider caches stay separate when switching clients for the same song");
+            check(!(await provider.ReadAsync(other,CancellationToken.None)).FromClient && downloads>firstDownloads,"provider caches stay separate when switching clients for the same song");
             provider.Invalidate(netSong); available=true; await provider.ReadAsync(netSong,CancellationToken.None);
             check(reads==4,"manual retry refreshes a previous direct-client result");
         }

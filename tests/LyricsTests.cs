@@ -17,6 +17,7 @@ namespace ClearDesk
             internal MusicSnapshot Value;
             public Task<MusicSnapshot> ReadAsync(string source) { return Task.FromResult(Value); }
             public Task<bool> CommandAsync(string key,MusicCommand command) { return Task.FromResult(true); }
+            public Task<bool> SeekAsync(string key,TimeSpan position) { return Task.FromResult(true); }
             public void Dispose() { }
         }
         sealed class Provider : ILyricsProvider
@@ -41,7 +42,8 @@ namespace ClearDesk
             string path=Path.Combine(Program.Data,"lyrics-test.lrc"); File.WriteAllText(path,"[00:00]本地歌词测试",Encoding.Unicode);
             check(LyricsDocument.FromFile(path).Lines[0].Text=="本地歌词测试","UTF-16 local lyric files decode correctly");
             int requests=0; string url=null;
-            var provider=new LyricsProvider((address,token)=> { requests++; url=address; return Task.FromResult("{\"trackName\":\"Demo & Song\",\"artistName\":\"ClearDesk 演示\",\"duration\":60,\"syncedLyrics\":\"[00:00]Original test line\"}"); });
+            // 1.9.1: QQ / NetEase online sources are asked first; this fixture only answers LRCLIB.
+            var provider=new LyricsProvider((address,token)=> { if(!address.Contains("lrclib.net")) return Task.FromResult<string>(null); requests++; url=address; return Task.FromResult("{\"trackName\":\"Demo & Song\",\"artistName\":\"ClearDesk 演示\",\"duration\":60,\"syncedLyrics\":\"[00:00]Original test line\"}"); });
             var track=Song("Demo & Song");
             var document=await provider.ReadAsync(track,CancellationToken.None); await provider.ReadAsync(track,CancellationToken.None);
             check(requests==1 && url.Contains("Demo%20%26%20Song") && document.Lines.Count==1,"lyrics requests encode metadata and reuse cached song results");

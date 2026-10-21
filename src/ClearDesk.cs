@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -87,6 +87,7 @@ namespace ClearDesk
 
         static void Run(string[] args)
         {
+            if(args.Length>0 && args[0]=="--music-diag") { MusicDiag.Run(args.Length>1?args[1]:"music-diag.txt"); return; }
             if(args.Contains("--client-lyrics-test")) { ClientLyricsTests.Live(); return; }
             if (args.Length > 0 && args[0] == "--dock-fixture")
             {

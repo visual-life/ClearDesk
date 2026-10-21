@@ -23,7 +23,12 @@ namespace ClearDesk
         readonly TextBlock elapsed = Program.Text("--:--", 10), total = Program.Text("--:--", 10);
         readonly Image artwork = new Image { Width = 52, Height = 52, Stretch = Stretch.UniformToFill };
         readonly TextBlock placeholder = Program.Text("♫", 28);
-        readonly ProgressBar progress = new ProgressBar { Height = 3, Minimum = 0, Maximum = 1, Foreground = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)), Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255)), Margin = new Thickness(0, 14, 0, 5) };
+        // Clickable / draggable timeline. IsMoveToPointEnabled makes a click jump straight to that point.
+        readonly SeekBar progress = new SeekBar { Margin = new Thickness(0, 8, 0, 2), ToolTip = "点击或拖动以跳转" };
+        bool seeking;              // user is pressing / dragging the timeline
+        DateTime seekHoldUntil;    // keep the requested position until the player reports it
+        double seekTarget = -1;
+        internal Task TestSeek(double ratio) { seeking = true; progress.Value = ratio; return CommitSeek(); }
         readonly Slider volume = new Slider { Minimum = 0, Maximum = 1, Value = .5, Width = 110, ToolTip = "本地音乐音量" };
         readonly StackPanel localTools = new StackPanel { Orientation = Orientation.Horizontal };
         readonly Button previous, toggle, next;
@@ -111,6 +116,15 @@ namespace ClearDesk
             track.Children.Add(labels);
             panel.Children.Add(track);
             panel.Children.Add(progress);
+            progress.PreviewMouseLeftButtonDown += delegate { seeking = true; };
+            progress.PreviewMouseLeftButtonUp += async delegate { await CommitSeek(); };
+            progress.LostMouseCapture += async delegate { if (seeking) await CommitSeek(); };
+            progress.ValueChanged += delegate
+            {
+                if (!seeking) return;
+                var d = CurrentDuration();
+                if (d > TimeSpan.Zero) elapsed.Text = MusicSources.Time(TimeSpan.FromSeconds(progress.Value * d.TotalSeconds));
+            };
             var timeline = new DockPanel { Opacity = .60 };
             total.HorizontalAlignment = HorizontalAlignment.Right;
             DockPanel.SetDock(total, Dock.Right);
@@ -259,6 +273,50 @@ namespace ClearDesk
             if (succeeded && !closed && generation == revision) Refresh();
         }
 
+        TimeSpan CurrentDuration()
+        {
+            if (selectedSource == "local") return local.NaturalDuration.HasTimeSpan ? local.NaturalDuration.TimeSpan : TimeSpan.Zero;
+            return snapshot.Duration;
+        }
+
+        async Task CommitSeek()
+        {
+            if (!seeking) return;
+            seeking = false;
+            var duration = CurrentDuration();
+            if (closed || duration <= TimeSpan.Zero) { Render(); return; }
+            double ratio = Math.Max(0, Math.Min(1, progress.Value));
+            var position = TimeSpan.FromSeconds(ratio * duration.TotalSeconds);
+            seekTarget = ratio;
+            seekHoldUntil = DateTime.UtcNow.AddSeconds(2.5);
+            if (selectedSource == "local") { local.Position = position; seekTarget = -1; Render(); return; }
+            bool ok = false;
+            int generation = revision;
+            commandBusy = true;
+            try
+            {
+                // Wait for an in-flight poll so the compatibility worker is free.
+                var deadline = DateTime.UtcNow.AddSeconds(3);
+                while (busy && !closed && generation == revision && DateTime.UtcNow < deadline) await Task.Delay(25);
+                if (!busy && !closed && generation == revision) ok = await sessions.SeekAsync(snapshot.Key, position);
+            }
+            catch { }
+            finally { commandBusy = false; }
+            if (closed || generation != revision) return;
+            if (ok) { snapshot.Position = position; Render(); }
+            else
+            {
+                seekTarget = -1; seekHoldUntil = DateTime.MinValue;
+                snapshot.Message = snapshot.Source == "netease" && snapshot.Key != null && snapshot.Key.StartsWith("netease-ui:")
+                    ? "网易云未接受跳转：请确认网易云已用同步模式打开（右键菜单），或在客户端内拖动进度条。"
+                    : snapshot.Source == "qq"
+                    ? "QQ 音乐未接受跳转：请确认 QQ 音乐主窗口没有被关闭到托盘后重试。"
+                    : "播放器不支持从外部调整进度。";
+                retryAfter = DateTime.UtcNow.AddSeconds(3);
+                Render();
+            }
+        }
+
         void Render()
         {
             bool isLocal = selectedSource == "local";
@@ -283,8 +341,16 @@ namespace ClearDesk
             artist.ToolTip = artist.Text;
             artwork.Source = view.Cover;
             placeholder.Visibility = view.Cover == null ? Visibility.Visible : Visibility.Collapsed;
-            progress.Value = view.Duration > TimeSpan.Zero ? view.Position.TotalSeconds / view.Duration.TotalSeconds : 0;
-            elapsed.Text = view.Duration > TimeSpan.Zero ? MusicSources.Time(view.Position) : "--:--";
+            double reported = view.Duration > TimeSpan.Zero ? view.Position.TotalSeconds / view.Duration.TotalSeconds : 0;
+            // While seeking (or shortly after) polling must not snap the thumb back to the old position.
+            if (seekTarget >= 0 && (DateTime.UtcNow >= seekHoldUntil || Math.Abs(reported - seekTarget) * Math.Max(1, view.Duration.TotalSeconds) < 2)) seekTarget = -1;
+            progress.IsEnabled = view.Duration > TimeSpan.Zero && (isLocal || view.CanSeek);
+            if (!seeking)
+            {
+                double shown = seekTarget >= 0 ? seekTarget : reported;
+                progress.Value = shown;
+                elapsed.Text = view.Duration > TimeSpan.Zero ? MusicSources.Time(TimeSpan.FromSeconds(shown * view.Duration.TotalSeconds)) : "--:--";
+            }
             total.Text = view.Duration > TimeSpan.Zero ? MusicSources.Time(view.Duration) : "--:--";
             string action = view.Playing ? "暂停" : "播放";
             if (!Equals(toggle.ToolTip, action))

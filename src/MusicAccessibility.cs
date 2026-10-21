@@ -106,6 +106,35 @@ namespace ClearDesk
         static int Role(Element e) { try { return Convert.ToInt32(e.Accessible.get_accRole(e.Id)); } catch { return 0; } }
         public static bool IsButton(Element e) { return Role(e) == 43; }
         public static bool IsText(Element e) { return Role(e) == 41; }
+        // ROLE_SYSTEM_SLIDER (0x33) or ROLE_SYSTEM_PROGRESSBAR (0x30).
+        public static bool IsSeekBar(Element e)
+        {
+            int r = Role(e); if (r == 0x33 || r == 0x30) return true;
+            // NetEase 3.1.1 exposes its timeline as a plain grouping named "播放进度调节".
+            return Name(e).Contains("进度");
+        }
+        public Element FindSeekBar(Element region, int depth)
+        {
+            if (region == null || depth < 0) return null;
+            foreach (var child in Children(region))
+            {
+                if (IsSeekBar(child)) return child;
+                var found = FindSeekBar(child, depth - 1);
+                if (found != null) return found;
+            }
+            return null;
+        }
+        public bool TrySetValue(Element e, string value)
+        {
+            try { e.Accessible.set_accValue(e.Id, value); return true; } catch { return false; }
+        }
+        public bool Location(Element e, out int left, out int top, out int width, out int height)
+        {
+            left = top = width = height = 0;
+            try { e.Accessible.accLocation(out left, out top, out width, out height, e.Id); return width > 4 && height > 0; }
+            catch { return false; }
+        }
+        public IntPtr Handle { get { return handle; } }
         public bool CanInvoke(Element e)
         {
             try { return e != null && (Convert.ToInt32(e.Accessible.get_accState(e.Id)) & 1) == 0 && !string.IsNullOrEmpty(e.Accessible.get_accDefaultAction(e.Id)); }

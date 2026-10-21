@@ -92,7 +92,11 @@ namespace ClearDesk
         {
             using(var request=new HttpRequestMessage(HttpMethod.Get,url))
             {
-                request.Headers.UserAgent.ParseAdd("ClearDesk/1.8.2 (+https://github.com/visual-life/ClearDesk)");
+                if(url.StartsWith("https://c.y.qq.com/",StringComparison.Ordinal))
+                { request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClearDesk/1.9.1"); request.Headers.Referrer=new Uri("https://y.qq.com/portal/player.html"); }
+                else if(url.StartsWith("https://music.163.com/",StringComparison.Ordinal))
+                { request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClearDesk/1.9.1"); request.Headers.Referrer=new Uri("https://music.163.com/"); }
+                else request.Headers.UserAgent.ParseAdd("ClearDesk/1.9.1 (+https://github.com/visual-life/ClearDesk)");
                 using(var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false))
                 {
                     if(response.StatusCode==HttpStatusCode.NotFound) return null;
@@ -107,6 +111,93 @@ namespace ClearDesk
                     }
                 }
             }
+        }
+        // Fallback for NetEase: search the public web API by title + artist, then fetch the LRC by song id.
+        // Sends only title/artist (and the matched id); no account, cookie or playlist data.
+        internal async Task<LyricsDocument> ReadNetEaseOnline(MusicSnapshot song,CancellationToken cancellation)
+        {
+            using(var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellation))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(12));
+                string search=await download("https://music.163.com/api/search/get?type=1&offset=0&limit=20&s="+Uri.EscapeDataString(song.Title+" "+song.Artist),timeout.Token).ConfigureAwait(false);
+                string id=PickNetEaseSong(song,search); if(id==null) return null;
+                string body=await download("https://music.163.com/api/song/lyric?lv=1&kv=1&tv=-1&id="+id,timeout.Token).ConfigureAwait(false);
+                var result=ClientLyrics.ParseNetEaseLyric(body);
+                if(result==null || string.IsNullOrWhiteSpace(result.Plain)) return null;
+                result.Credit="网易云音乐 · 在线歌词"; return result;
+            }
+        }
+        internal static string PickNetEaseSong(MusicSnapshot song,string json)
+        {
+            if(string.IsNullOrWhiteSpace(json)) return null;
+            var data=new JavaScriptSerializer { MaxJsonLength=1024*1024 }.DeserializeObject(json) as Dictionary<string,object>; object value;
+            if(data==null || !data.TryGetValue("result",out value)) return null;
+            var result=value as Dictionary<string,object>; if(result==null || !result.TryGetValue("songs",out value)) return null;
+            string best=null; int bestScore=-1;
+            foreach(var entry in ClientLyrics.Tracks(value))
+            {
+                var candidate=ClientLyrics.NetEaseTrack(entry); string id=ClientLyrics.Str(entry,"id");
+                if(!Regex.IsMatch(id,@"^\d{1,20}$")) continue;
+                int score=ClientLyrics.MatchScore(song,candidate.Title,candidate.Artist,candidate.Duration.TotalSeconds);
+                if(score>bestScore) { best=id; bestScore=score; }
+            }
+            return best;
+        }
+        // QQ Music public web endpoints: search by cleaned title + main artist, then fetch LRC by songmid.
+        internal async Task<LyricsDocument> ReadQQOnline(MusicSnapshot song,CancellationToken cancellation)
+        {
+            using(var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellation))
+            {
+                timeout.CancelAfter(TimeSpan.FromSeconds(12));
+                var artists=ClientLyrics.ArtistList(song.Artist);
+                string keyword=Regex.Replace(song.Title,@"\s*[\(\[（【][^\)\]）】]*[\)\]）】]","").Trim();
+                if(keyword.Length==0) keyword=song.Title;
+                string first=(song.Artist??"").Split(new[]{'/','、',',','&','_','，'},StringSplitOptions.RemoveEmptyEntries).Select(a=>a.Trim()).FirstOrDefault()??"";
+                string search=await download("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&p=1&n=20&w="+Uri.EscapeDataString(keyword+" "+first),timeout.Token).ConfigureAwait(false);
+                string mid=PickQQSong(song,search); if(mid==null) return null;
+                string body=await download("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?format=json&nobase64=1&g_tk=5381&songmid="+Uri.EscapeDataString(mid),timeout.Token).ConfigureAwait(false);
+                var result=ParseQQLyric(body);
+                if(result==null || string.IsNullOrWhiteSpace(result.Plain)) return null;
+                result.Credit="QQ 音乐 · 在线歌词"; return result;
+            }
+        }
+        internal static string PickQQSong(MusicSnapshot song,string json)
+        {
+            if(string.IsNullOrWhiteSpace(json)) return null;
+            json=Unwrap(json);
+            var root=new JavaScriptSerializer { MaxJsonLength=2*1024*1024 }.DeserializeObject(json) as Dictionary<string,object>; object value;
+            if(root==null || !root.TryGetValue("data",out value)) return null;
+            var data=value as Dictionary<string,object>; if(data==null || !data.TryGetValue("song",out value)) return null;
+            var songs=value as Dictionary<string,object>; if(songs==null || !songs.TryGetValue("list",out value)) return null;
+            string best=null; int bestScore=-1;
+            foreach(var entry in ClientLyrics.Tracks(value))
+            {
+                string mid=ClientLyrics.Str(entry,"songmid"); if(!Regex.IsMatch(mid,@"^[0-9A-Za-z]{6,20}$")) continue;
+                var names=new List<string>(); object singers;
+                if(entry.TryGetValue("singer",out singers) && singers is System.Collections.IEnumerable && !(singers is string))
+                    foreach(object s in (System.Collections.IEnumerable)singers) { string n=ClientLyrics.Str(s as Dictionary<string,object>,"name"); if(n.Length>0) names.Add(n); }
+                double seconds; double.TryParse(ClientLyrics.Str(entry,"interval"),NumberStyles.Float,CultureInfo.InvariantCulture,out seconds);
+                int score=ClientLyrics.MatchScore(song,ClientLyrics.Str(entry,"songname"),string.Join("/",names),seconds);
+                if(score>bestScore) { best=mid; bestScore=score; }
+            }
+            return best;
+        }
+        static string Unwrap(string text)
+        {
+            text=text.Trim();
+            int open=text.IndexOf('('); // JSONP: callback({...})
+            if(!text.StartsWith("{") && open>0 && text.EndsWith(")")) text=text.Substring(open+1,text.Length-open-2);
+            return text;
+        }
+        internal static LyricsDocument ParseQQLyric(string body)
+        {
+            if(string.IsNullOrWhiteSpace(body)) return null;
+            var data=new JavaScriptSerializer { MaxJsonLength=1024*1024 }.DeserializeObject(Unwrap(body)) as Dictionary<string,object>;
+            if(data==null) return null;
+            string lyric=ClientLyrics.Str(data,"lyric"); if(lyric.Length==0) return null;
+            if(!lyric.Contains("[") ) { try { lyric=Encoding.UTF8.GetString(Convert.FromBase64String(lyric)); } catch { } }
+            lyric=WebUtility.HtmlDecode(lyric);
+            return LyricsDocument.Parse(lyric);
         }
         public void Invalidate(MusicSnapshot song) { lock(cache) cache.Remove(CacheKey(song)); }
         public async Task<LyricsDocument> ReadAsync(MusicSnapshot song,CancellationToken cancellation)
@@ -129,6 +220,22 @@ namespace ClearDesk
                 return direct;
             }
             lock(cache) if(cache.TryGetValue(key,out cached)) return cached;
+            // Online sources: the playing client's own catalogue first, then the other one, then LRCLIB.
+            var online=song.Source=="qq"
+                ? new Func<MusicSnapshot,CancellationToken,Task<LyricsDocument>>[]{ ReadQQOnline, ReadNetEaseOnline }
+                : new Func<MusicSnapshot,CancellationToken,Task<LyricsDocument>>[]{ ReadNetEaseOnline, ReadQQOnline };
+            foreach(var source in online)
+            {
+                LyricsDocument found=null;
+                try { found=await source(song,cancellation).ConfigureAwait(false); }
+                catch(OperationCanceledException) { if(cancellation.IsCancellationRequested) throw; }
+                catch { } // Public endpoint changed or offline: try the next source.
+                if(found!=null)
+                {
+                    lock(cache) { if(cache.Count>=64) cache.Clear(); cache[key]=found; }
+                    return found;
+                }
+            }
             string url="https://lrclib.net/api/get?track_name="+Uri.EscapeDataString(song.Title)+"&artist_name="+Uri.EscapeDataString(song.Artist);
             if(!string.IsNullOrWhiteSpace(song.Album)) url+="&album_name="+Uri.EscapeDataString(song.Album);
             double duration=Math.Round(song.Duration.TotalSeconds);
@@ -137,7 +244,7 @@ namespace ClearDesk
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(12));
                 string json=await download(url,timeout.Token).ConfigureAwait(false);
-                var result=json==null?new LyricsDocument { Message=ClientLyrics.Supports(song)?"请在音乐软件中打开歌词页，加载后会自动同步":"暂无匹配歌词，可右键导入 LRC" }:Decode(song,json);
+                var result=json==null?new LyricsDocument { Message=ClientLyrics.Supports(song)?"未找到歌词：已尝试客户端缓存、QQ 音乐／网易云在线与 LRCLIB，可右键重新匹配或导入 LRC":"暂无匹配歌词，可右键导入 LRC" }:Decode(song,json);
                 cancellation.ThrowIfCancellationRequested();
                 lock(cache) { if(cache.Count>=64) cache.Clear(); cache[key]=result; }
                 return result;

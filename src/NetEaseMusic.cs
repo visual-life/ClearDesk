@@ -31,7 +31,7 @@ namespace ClearDesk
                 CultureInfo.InvariantCulture, out value);
         }
 
-        async Task<T> Run<T>(Func<T> operation, T unavailable)
+        async Task<T> Run<T>(Func<T> operation, T unavailable, int timeout = 1500)
         {
             Task<T> work;
             lock (gate)
@@ -41,20 +41,26 @@ namespace ClearDesk
                 pending = work;
             }
             // A hung accessibility provider must not freeze the card or accumulate workers.
-            return await Task.WhenAny(work, Task.Delay(1500)).ConfigureAwait(false) == work
+            return await Task.WhenAny(work, Task.Delay(timeout)).ConfigureAwait(false) == work
                 ? await work.ConfigureAwait(false) : unavailable;
         }
 
+        readonly PlaybackEstimator clock = new PlaybackEstimator();
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
+
         sealed class Target
         {
-            public Element Root, Play;
+            public Element Root, Play, Seek;
+            public IntPtr Window;
             public Element[] Controls;
             public string Key, Title, Artist;
+            public bool TitleOnly; // CEF accessibility tree is empty: only the window title is readable
         }
 
         Target Find(MusicAccessibility ui)
         {
             var processes = Process.GetProcessesByName("cloudmusic");
+            Target titleOnly = null;
             foreach (var process in processes)
             {
                 using (process)
@@ -67,17 +73,29 @@ namespace ClearDesk
                         if (handle == IntPtr.Zero || !ParseTitle(process.MainWindowTitle, out title, out artist)) continue;
                         var root = ui.Window(handle);
                         var play = ui.FindPlayback(root);
-                        if (play == null) continue;
+                        if (play == null)
+                        {
+                            // NetEase 3.x's embedded Chromium exposes no web content to accessibility unless it
+                            // was started with --force-renderer-accessibility. The window title still carries
+                            // "title - artist", which is enough for lyrics (without timeline / controls).
+                            if (titleOnly == null) titleOnly = new Target { Root = root, Window = handle, Title = title, Artist = artist, Controls = new Element[0], TitleOnly = true,
+                                Key = "netease-ui:" + process.Id + ":" + process.StartTime.ToUniversalTime().Ticks + ":" + handle.ToInt64() };
+                            continue;
+                        }
                         string playName = MusicAccessibility.Name(play);
                         if (playName != "pause" && playName != "play") continue;
                         var parent = ui.Parent(play);
-                        return new Target { Root = root, Play = play, Title = title, Artist = artist, Controls = parent == null ? new Element[0] : ui.Children(parent),
+                        // The progress bar sits a few levels above the transport buttons in the CEF tree.
+                        Element seek = null, region = parent;
+                        for (int level = 0; level < 4 && region != null && seek == null; level++, region = ui.Parent(region))
+                            seek = ui.FindSeekBar(region, 3);
+                        return new Target { Root = root, Play = play, Seek = seek, Window = handle, Title = title, Artist = artist, Controls = parent == null ? new Element[0] : ui.Children(parent),
                             Key = "netease-ui:" + process.Id + ":" + process.StartTime.ToUniversalTime().Ticks + ":" + handle.ToInt64() };
                     }
                     catch { }
                 }
             }
-            return null;
+            return titleOnly;
         }
 
         static Element Transport(Target target, string name)
@@ -94,16 +112,22 @@ namespace ClearDesk
                     var target = Find(ui);
                     if (target == null) { activeKey = null; return null; }
                     activeKey = target.Key;
+                    if (target.TitleOnly)
+                        return new MusicSnapshot { Key = target.Key, Source = "netease", Title = target.Title, Artist = target.Artist,
+                            Message = "网易云未开放播放控件：仅显示歌名和歌词。右键 →“以同步模式重启网易云”可启用进度、切歌和逐句同步。" };
                     var view = new MusicSnapshot { Key = target.Key, Source = "netease",
                         Title = target.Title, Artist = target.Artist, Playing = MusicAccessibility.Name(target.Play) == "pause",
                         CanToggle = ui.CanInvoke(target.Play), CanPrevious = ui.CanInvoke(Transport(target, "pre")),
                         CanNext = ui.CanInvoke(Transport(target, "next")) };
+                    view.CanSeek = target.Seek != null;
                     var region = ui.Parent(target.Play);
                     for (int level = 0; level < 3 && region != null; level++, region = ui.Parent(region))
                     {
                         var times = ui.Labels(region, 2).ToArray();
                         if (ReadTimeline(times, view)) break;
                     }
+                    // Minimized CEF freezes the tree; keep the clock running from the client's audio output.
+                    clock.Apply(view, IsIconic(target.Window), () => AudioPeak.Peak("cloudmusic"), DateTime.UtcNow, PlaybackEstimator.QueueDuration);
                     return view;
                 }
             }, (MusicSnapshot)null);
@@ -134,11 +158,85 @@ namespace ClearDesk
                 {
                     if (key == null || key != activeKey) return false;
                     var target = Find(ui);
-                    if (target == null || target.Key != key || disposed) return false;
+                    if (target == null || target.Key != key || target.TitleOnly || disposed) return false;
                     var button = command == MusicCommand.Toggle ? target.Play : Transport(target, command == MusicCommand.Next ? "next" : "pre");
                     return ui.Invoke(button);
                 }
             }, false);
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr window, ref POINT point);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT point);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
+        struct POINT { public int X, Y; }
+
+        // NetEase 3.x publishes no SMTC session, so TryChangePlaybackPositionAsync is unavailable.
+        // Best effort: post a synthetic click (no real cursor movement, no focus change) at the
+        // matching point of the client's own accessible progress bar.
+        public Task<bool> SeekAsync(string key, TimeSpan position)
+        {
+            return Run(() =>
+            {
+                using (var ui = new MusicAccessibility())
+                {
+                    if (key == null || key != activeKey) return false;
+                    var target = Find(ui);
+                    if (target == null || target.Key != key || target.Seek == null || disposed) return false;
+                    TimeSpan duration = TimeSpan.Zero;
+                    var probe = new MusicSnapshot();
+                    var region = ui.Parent(target.Play);
+                    for (int level = 0; level < 3 && region != null; level++, region = ui.Parent(region))
+                        if (ReadTimeline(ui.Labels(region, 2).ToArray(), probe)) { duration = probe.Duration; break; }
+                    if (duration <= TimeSpan.Zero) return false;
+                    double ratio = Math.Max(0, Math.Min(1, position.TotalSeconds / duration.TotalSeconds));
+                    // Minimized: restore invisibly without activation, click, minimize again (see WindowPeek).
+                    return WindowPeek.WithRestored(target.Window, () =>
+                    {
+                        int left = 0, top = 0, width = 0, height = 0;
+                        bool located = WindowPeek.Wait(() =>
+                        {
+                            using (var fresh = new MusicAccessibility())
+                            {
+                                var again = Find(fresh);
+                                return again != null && again.Seek != null && fresh.Location(again.Seek, out left, out top, out width, out height) && left > -10000;
+                            }
+                        }, ok => ok, 1500);
+                        if (!located) return false;
+                        bool clicked = WindowPeek.PostClick(target.Window, left + (int)Math.Round(ratio * (width - 1)), top + height / 2);
+                        System.Threading.Thread.Sleep(WindowPeek.SettleMs);
+                        return clicked;
+                    });
+                }
+            }, false, 6000);
+        }
+
+        internal const string AccessibilitySwitch = "--force-renderer-accessibility";
+
+        // User-initiated: restart NetEase with Chromium accessibility so playback controls become readable.
+        public static string RestartWithAccessibility()
+        {
+            string path = null;
+            foreach (var p in Process.GetProcessesByName("cloudmusic"))
+                using (p) { try { if (path == null || p.MainWindowHandle != IntPtr.Zero) path = p.MainModule.FileName; } catch { } }
+            if (path == null)
+            {
+                try
+                {
+                    using (var key = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"orpheus\shell\open\command"))
+                    {
+                        string cmd = key == null ? null : key.GetValue("") as string;
+                        if (cmd != null) { int a = cmd.IndexOf('"'), b = a >= 0 ? cmd.IndexOf('"', a + 1) : -1; if (b > a) path = cmd.Substring(a + 1, b - a - 1); }
+                    }
+                }
+                catch { }
+            }
+            if (path == null || !System.IO.File.Exists(path)) return "未找到网易云音乐程序，请先手动打开网易云音乐。";
+            foreach (var p in Process.GetProcessesByName("cloudmusic"))
+                using (p) { try { p.Kill(); p.WaitForExit(3000); } catch { } }
+            System.Threading.Thread.Sleep(800);
+            Process.Start(new ProcessStartInfo(path, AccessibilitySwitch) { UseShellExecute = true, WorkingDirectory = System.IO.Path.GetDirectoryName(path) });
+            return null;
         }
 
         public void Dispose() { disposed = true; }
