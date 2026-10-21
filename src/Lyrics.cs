@@ -18,6 +18,7 @@ namespace ClearDesk
     {
         internal List<LyricLine> Lines=new List<LyricLine>();
         internal string Plain="", Message="", Credit="";
+        internal bool FromClient;
         internal static LyricsDocument Parse(string text)
         {
             var result=new LyricsDocument(); text=text??"";
@@ -63,8 +64,11 @@ namespace ClearDesk
     {
         static readonly HttpClient client=new HttpClient(new HttpClientHandler { AllowAutoRedirect=false }) { Timeout=TimeSpan.FromSeconds(12) };
         readonly Func<string,CancellationToken,Task<string>> download;
+        readonly Func<MusicSnapshot,CancellationToken,LyricsDocument> readClient;
         readonly Dictionary<string,LyricsDocument> cache=new Dictionary<string,LyricsDocument>();
-        internal LyricsProvider(Func<string,CancellationToken,Task<string>> transport=null) { download=transport??Download; }
+        internal LyricsProvider(Func<string,CancellationToken,Task<string>> transport=null,Func<MusicSnapshot,CancellationToken,LyricsDocument> local=null)
+        { download=transport??Download; readClient=local??new ClientLyrics().Read; }
+        static string CacheKey(MusicSnapshot song) { return song.Source+"\n"+TrackKey(song); }
         internal static string TrackKey(MusicSnapshot track)
         {
             return (track.LocalPath??"")+"\n"+track.Title+"\n"+track.Artist+"\n"+track.Album+"\n"+Math.Round(track.Duration.TotalSeconds).ToString(CultureInfo.InvariantCulture);
@@ -88,7 +92,7 @@ namespace ClearDesk
         {
             using(var request=new HttpRequestMessage(HttpMethod.Get,url))
             {
-                request.Headers.UserAgent.ParseAdd("ClearDesk/1.8.1 (+https://github.com/visual-life/ClearDesk)");
+                request.Headers.UserAgent.ParseAdd("ClearDesk/1.8.2 (+https://github.com/visual-life/ClearDesk)");
                 using(var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false))
                 {
                     if(response.StatusCode==HttpStatusCode.NotFound) return null;
@@ -104,7 +108,7 @@ namespace ClearDesk
                 }
             }
         }
-        public void Invalidate(MusicSnapshot song) { lock(cache) cache.Remove(TrackKey(song)); }
+        public void Invalidate(MusicSnapshot song) { lock(cache) cache.Remove(CacheKey(song)); }
         public async Task<LyricsDocument> ReadAsync(MusicSnapshot song,CancellationToken cancellation)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -114,7 +118,16 @@ namespace ClearDesk
                 return File.Exists(lrc)?await Task.Run(()=>LyricsDocument.FromFile(lrc),cancellation).ConfigureAwait(false):new LyricsDocument { Message="将同名 LRC 放在音乐旁，或右键导入歌词" };
             }
             if(string.IsNullOrWhiteSpace(song.Title) || string.IsNullOrWhiteSpace(song.Artist)) return new LyricsDocument { Message="歌曲信息不足，可右键导入歌词" };
-            string key=TrackKey(song); LyricsDocument cached;
+            string key=CacheKey(song); LyricsDocument cached;
+            lock(cache) if(cache.TryGetValue(key,out cached) && cached.FromClient) return cached;
+            var direct=await Task.Run(()=>readClient(song,cancellation),cancellation).ConfigureAwait(false);
+            cancellation.ThrowIfCancellationRequested();
+            if(direct!=null)
+            {
+                direct.FromClient=true;
+                lock(cache) { if(cache.Count>=64) cache.Clear(); cache[key]=direct; }
+                return direct;
+            }
             lock(cache) if(cache.TryGetValue(key,out cached)) return cached;
             string url="https://lrclib.net/api/get?track_name="+Uri.EscapeDataString(song.Title)+"&artist_name="+Uri.EscapeDataString(song.Artist);
             if(!string.IsNullOrWhiteSpace(song.Album)) url+="&album_name="+Uri.EscapeDataString(song.Album);
@@ -124,7 +137,7 @@ namespace ClearDesk
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(12));
                 string json=await download(url,timeout.Token).ConfigureAwait(false);
-                var result=json==null?new LyricsDocument { Message="暂无匹配歌词，可右键导入 LRC" }:Decode(song,json);
+                var result=json==null?new LyricsDocument { Message=ClientLyrics.Supports(song)?"请在音乐软件中打开歌词页，加载后会自动同步":"暂无匹配歌词，可右键导入 LRC" }:Decode(song,json);
                 cancellation.ThrowIfCancellationRequested();
                 lock(cache) { if(cache.Count>=64) cache.Clear(); cache[key]=result; }
                 return result;

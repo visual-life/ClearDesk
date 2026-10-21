@@ -87,6 +87,7 @@ namespace ClearDesk
 
         static void Run(string[] args)
         {
+            if(args.Contains("--client-lyrics-test")) { ClientLyricsTests.Live(); return; }
             if (args.Length > 0 && args[0] == "--dock-fixture")
             {
                 DockBehaviorTest.Fixture();

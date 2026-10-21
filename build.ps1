@@ -38,7 +38,7 @@ foreach ($name in @('System.Runtime.dll','System.Runtime.WindowsRuntime.dll')) {
     if (-not (Test-Path -LiteralPath $ref)) { $ref = Join-Path (Join-Path $framework 'Facades') $name }
     $refs += '/reference:' + $ref
 }
-$sources = @('src','tests','third_party\lunar') | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot $_) -Filter '*.cs' -Recurse | Select-Object -ExpandProperty FullName }
+$sources = @('src','tests','third_party\lunar','third_party\qrc') | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot $_) -Filter '*.cs' -Recurse | Select-Object -ExpandProperty FullName }
 & $Compiler /nologo /target:winexe /platform:x64 /optimize+ /deterministic+ /utf8output ('/out:' + (Join-Path $OutputDirectory 'ClearDesk.exe')) ('/win32manifest:' + (Join-Path $PSScriptRoot 'config\app.manifest')) ('/win32icon:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico')) ('/resource:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico') + ',ClearDesk.AppIcon.ico') $refs $sources
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'config\ClearDesk.exe.config') -Destination $OutputDirectory -Force

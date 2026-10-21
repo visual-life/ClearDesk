@@ -24,15 +24,17 @@ namespace ClearDesk
         CancellationTokenSource lyricCancellation;
         string lyricKey;
         int lyricRevision;
+        DateTime lyricClientRetryAt;
         internal string TestLyric { get { return lyricCurrent.Text; } }
         internal bool TestLyricsVisible { get { return lyricsPanel.Visibility==Visibility.Visible; } }
         internal void TestLyrics(bool enabled) { SetLyrics(enabled); }
         internal void TestLyricsRender(MusicSnapshot value) { RenderLyrics(value); }
+        internal void TestLyricsRetry() { lyricClientRetryAt=DateTime.MinValue; RenderLyrics(lyricView); }
 
         void SetupLyrics(StackPanel panel)
         {
             lyricsButton.Template=RoundedButtonTemplate(13);
-            lyricsButton.ToolTip="开启歌词：联网匹配当前歌名、歌手（LRCLIB）；也可右键导入本地 LRC";
+            lyricsButton.ToolTip="优先读取 QQ 音乐／网易云客户端已加载的歌词；找不到时联网匹配（LRCLIB），也可右键导入 LRC";
             System.Windows.Automation.AutomationProperties.SetName(lyricsButton,"显示或隐藏歌词");
             lyricsButton.Click+=delegate { SetLyrics(!Program.S.MusicLyrics); };
             DockPanel.SetDock(lyricsButton,Dock.Right); Header.Children.Insert(1,lyricsButton);
@@ -76,6 +78,8 @@ namespace ClearDesk
                 _ = LoadLyrics(view,key,lyricRevision); return;
             }
             DisplayLyrics(view);
+            if(lyricCancellation==null && lyricDocument!=null && !lyricDocument.FromClient && ClientLyrics.Supports(view) && DateTime.UtcNow>=lyricClientRetryAt && !Program.S.MusicLyricFiles.ContainsKey(LyricsProvider.TrackKey(view)))
+                _ = LoadLyrics(view,key,lyricRevision);
         }
         void ShowLyricStatus(string text)
         {
@@ -102,7 +106,11 @@ namespace ClearDesk
             {
                 if(!closed && generation==lyricRevision) { lyricDocument=new LyricsDocument { Message="歌词暂不可用，可右键重试或导入" }; DisplayLyrics(lyricView); }
             }
-            finally { if(ReferenceEquals(lyricCancellation,cancellation)) lyricCancellation=null; cancellation.Dispose(); }
+            finally
+            {
+                if(ReferenceEquals(lyricCancellation,cancellation)) { lyricCancellation=null; lyricClientRetryAt=DateTime.UtcNow.AddSeconds(15); }
+                cancellation.Dispose();
+            }
         }
         void DisplayLyrics(MusicSnapshot view)
         {

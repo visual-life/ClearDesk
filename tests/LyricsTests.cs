@@ -33,6 +33,7 @@ namespace ClearDesk
         static MusicSnapshot Song(string title,double position=0) { return new MusicSnapshot { Key="test",Source="qq",Title=title,Artist="ClearDesk 演示",Duration=TimeSpan.FromSeconds(60),Position=TimeSpan.FromSeconds(position),Playing=true }; }
         internal static async Task Run(DockWindow dock,Action<bool,string> check)
         {
+            await ClientLyricsTests.Run(check);
             var lrc=LyricsDocument.Parse("[offset:500]\n[00:01.25][00:05.250]First\n[00:03]Middle\n[00:03]Translation\n[00:06]\n[00:99]Invalid");
             check(lrc.Lines.Count==4 && lrc.Lines[0].Seconds==.75 && lrc.Lines[1].Text=="Middle / Translation","LRC parser handles timestamps offset duplicate timestamps and invalid seconds");
             check(lrc.At(TimeSpan.Zero)==-1 && lrc.At(TimeSpan.FromSeconds(5))==2 && lrc.At(TimeSpan.FromSeconds(2))==0,"lyric lookup tracks both forward playback and backward seeks");
@@ -60,6 +61,11 @@ namespace ClearDesk
                 FeatureTests.Capture(window,"music-lyrics-example");
                 backend.Value.Position=TimeSpan.FromSeconds(2); backend.Value.Playing=false; window.TestRefresh(); await Task.Delay(60);
                 check(window.TestLyric=="微风从桌面经过" && lyrics.Reads==1,"pause and backward seek use client position without refetching lyrics");
+                var cachePending=new TaskCompletionSource<LyricsDocument>(); lyrics.Pending=cachePending; window.TestLyricsRetry();
+                check(window.TestLyric=="微风从桌面经过" && lyrics.Reads==2,"late client-cache retry preserves visible lyrics while loading");
+                var clientDoc=LyricsDocument.Parse("[00:00]客户端测试歌词"); clientDoc.FromClient=true; cachePending.SetResult(clientDoc); await Task.Delay(60);
+                window.TestLyricsRetry();
+                check(window.TestLyric=="客户端测试歌词" && lyrics.Reads==2,"successful client lyrics stop periodic cache retries");
                 var pending=new TaskCompletionSource<LyricsDocument>(); lyrics.Pending=pending; backend.Value=Song("第二首",15); window.TestRefresh(); await Task.Delay(60);
                 check(window.TestLyric=="正在查找歌词…","track changes clear previous lyrics before the new request completes");
                 window.TestLyrics(false); pending.SetResult(LyricsDocument.Parse("[00:00]Late result")); await Task.Delay(60);
