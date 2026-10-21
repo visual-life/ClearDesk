@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,7 +11,7 @@ using Microsoft.Win32;
 
 namespace ClearDesk
 {
-    public sealed class MusicWindow : GlassWindow
+    public sealed partial class MusicWindow : GlassWindow
     {
         readonly IMusicSessions sessions;
         readonly MediaPlayer local = new MediaPlayer();
@@ -44,9 +44,11 @@ namespace ClearDesk
 
         public MusicWindow() : this(new MusicSessions()) { }
 
-        internal MusicWindow(IMusicSessions backend) : base(Program.Widget("music", 20, 430, 340, 232), "音乐")
+        internal MusicWindow(IMusicSessions backend, ILyricsProvider lyricProvider=null) : base(Program.Widget("music", 20, 430, 340, 232), "音乐")
         {
             sessions = backend;
+            lyrics = lyricProvider ?? new LyricsProvider();
+            if(Program.S.MusicLyricFiles==null) Program.S.MusicLyricFiles=new Dictionary<string,string>();
             Root.Children.Insert(Root.Children.IndexOf(Layout), new Border
             {
                 Background = new SolidColorBrush(Color.FromArgb(82, 10, 12, 18)),
@@ -133,6 +135,7 @@ namespace ClearDesk
             status.MaxHeight = 32;
             status.Margin = new Thickness(0, 6, 0, 0);
             panel.Children.Add(status);
+            SetupLyrics(panel);
             Body.Children.Add(panel);
             local.MediaEnded += delegate { if (selectedSource == "local" && playlist.Count > 0) Play((current + 1) % playlist.Count); };
             local.MediaFailed += delegate { playing = false; localError = "无法播放此格式，请使用 MP3 / WAV"; if (!closed) Render(); };
@@ -144,6 +147,7 @@ namespace ClearDesk
             {
                 closed = true;
                 revision++;
+                CancelLyrics();
                 Timer.Stop();
                 sourceMenu.IsOpen = false;
                 sessions.Dispose();
@@ -266,6 +270,7 @@ namespace ClearDesk
                 view = new MusicSnapshot
                 {
                     Title = loaded ? Path.GetFileNameWithoutExtension(playlist[current]) : "",
+                    LocalPath=loaded?playlist[current]:null,
                     Artist = "本地音乐", Playing = playing, CanToggle = loaded && string.IsNullOrEmpty(localError),
                     CanNext = playlist.Count > 1, CanPrevious = playlist.Count > 1,
                     Position = MusicSources.ClampPosition(local.Position, duration), Duration = duration,
@@ -295,7 +300,9 @@ namespace ClearDesk
             status.Visibility = string.IsNullOrEmpty(view.Message) ? Visibility.Collapsed : Visibility.Visible;
             localTools.Visibility = isLocal ? Visibility.Visible : Visibility.Collapsed;
             source.Content = (selectedSource == "auto" ? "自动选择" : MusicSources.Name(selectedSource)) + "  ⌄";
-            double height = isLocal ? 294 : string.IsNullOrEmpty(view.Message) ? 214 : 252;
+            RenderLyrics(view);
+            if(Program.S.MusicLyrics && string.IsNullOrWhiteSpace(view.Title)) status.Visibility=Visibility.Collapsed;
+            double height = (isLocal ? 294 : status.Visibility==Visibility.Collapsed ? 214 : 252) + (Program.S.MusicLyrics?136:0);
             State.Height = height;
             if (!State.Collapsed && Height != height) Height = height;
         }

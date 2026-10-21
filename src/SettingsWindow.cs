@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -12,7 +12,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "1.8.0";
+        internal const string Version = "1.8.1";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -172,6 +172,7 @@ namespace ClearDesk
             Toggle(g,"显示音乐组件","显示歌曲信息，控制播放、上一首和下一首。",state.Music,v => state.Music=v);
             var sources=new[]{"auto","qq","netease","kugou","local"};
             Choice(g,"音乐来源","选择后点击应用更新音乐组件。",new[]{"自动选择播放器","QQ 音乐","网易云音乐","酷狗音乐","本地音乐"},Array.IndexOf(sources,MusicSources.Normalize(state.MusicSource)),i => state.MusicSource=sources[i]);
+            Toggle(g,"显示歌词","在播放控制下方显示歌词；开启后向 LRCLIB 发送歌名、歌手等信息匹配歌词。",state.MusicLyrics,v=>state.MusicLyrics=v);
             Row(g,"连接播放器","先在客户端播放歌曲。QQ 音乐、网易云音乐已实测；酷狗兼容性尚未真机验证。");
             Row(g,"本地播放","在桌面音乐组件中选择本地音乐，并添加音频文件。");
             g=AddGroup(4,"Dock 材质");

@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet('Self','Regression','PopupBenchmark','WeatherLive')][string]$Suite = 'Self',
+    [ValidateSet('Self','Regression','PopupBenchmark','WeatherLive','LyricsLive')][string]$Suite = 'Self',
     [string]$BuildDirectory,
     [int]$TimeoutSeconds = 180
 )
@@ -19,8 +19,8 @@ $settings = @{
     Boxes=@(@{Id='regression-organizer';Title='Desktop test';X=20;Y=20;Width=520;Height=360;Desktop=$true;Enabled=$true;Collapsed=$false;Material='liquid';Items=@();Excluded=@()})
 }
 $settings | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runDirectory 'preview-data\settings.json') -Encoding UTF8
-$arguments = @{Self='--self-test';Regression='--regression-test';PopupBenchmark='--popup-benchmark';WeatherLive='--weather-test'}
-$logs = @{Self='self-test.txt';Regression='regression-test.txt';PopupBenchmark='popup-benchmark.json';WeatherLive='weather-live-test.txt'}
+$arguments = @{Self='--self-test';Regression='--regression-test';PopupBenchmark='--popup-benchmark';WeatherLive='--weather-test';LyricsLive='--lyrics-test'}
+$logs = @{Self='self-test.txt';Regression='regression-test.txt';PopupBenchmark='popup-benchmark.json';WeatherLive='weather-live-test.txt';LyricsLive='lyrics-live-test.txt'}
 $process = Start-Process -FilePath (Join-Path $runDirectory 'ClearDesk.exe') -ArgumentList $arguments[$Suite] -WorkingDirectory $runDirectory -WindowStyle Hidden -PassThru
 if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { $process.Kill(); throw "Test timed out; inspect $runDirectory" }
 $process.Refresh()

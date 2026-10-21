@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -361,6 +361,7 @@ namespace ClearDesk
             canvas.Children.Add(dot);
         }
 
+        internal ContextMenu TestEntryMenu(DockEntry entry) { return EntryMenu(entry); }
         ContextMenu EntryMenu(DockEntry entry)
         {
             var menu = new ContextMenu();
@@ -400,7 +401,6 @@ namespace ClearDesk
             close.ToolTip = "正常关闭该应用的所有窗口；未保存内容由应用自行提示。";
             close.IsEnabled = entry.IsRunning;
             menu.Opened += delegate { running.Refresh(); close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity)); };
-            menu.Items.Add(close);
             if (entry.Running != null && entry.Running.Windows.Count > 1)
             {
                 var windows = new MenuItem
@@ -433,6 +433,8 @@ namespace ClearDesk
                 }));
             }
 
+            menu.Items.Add(new Separator());
+            menu.Items.Add(close);
             return menu;
         }
 

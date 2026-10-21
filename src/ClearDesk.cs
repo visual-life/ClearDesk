@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -35,6 +35,8 @@ namespace ClearDesk
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
         public string MusicSource = "auto";
+        public bool MusicLyrics = false;
+        public Dictionary<string,string> MusicLyricFiles = new Dictionary<string,string>();
         public List<BoxData> Boxes = new List<BoxData>();
         public List<string> Pins = new List<string>();
         public Dictionary<string, BoxData> Widgets = new Dictionary<string, BoxData>();
@@ -97,7 +99,7 @@ namespace ClearDesk
                 return;
             }
 
-            Rendering = args.Contains("--weather-test") || args.Contains("--popup-benchmark") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
+            Rendering = args.Contains("--lyrics-test") || args.Contains("--weather-test") || args.Contains("--popup-benchmark") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
             Preview = args.Contains("--preview") || Rendering || args.Contains("--integration-test");
             if (Preview)
                 Data = Path.Combine(Base, "preview-data");
@@ -166,7 +168,7 @@ namespace ClearDesk
                 Rebuild();
             }
 
-            if (!args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
+            if (!args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
                 ShowSettings();
             if (args.Contains("--popup-benchmark"))
                 PopupBenchmark.Start();
@@ -174,6 +176,8 @@ namespace ClearDesk
                 RegressionTest.Start();
             if (args.Contains("--weather-test"))
                 FeatureTests.LiveWeather();
+            if (args.Contains("--lyrics-test"))
+                LyricsTests.Live();
             if (args.Contains("--benchmark"))
                 Benchmark.Start();
             if (args.Contains("--integration-test"))

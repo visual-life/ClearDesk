@@ -14,7 +14,7 @@ namespace ClearDesk
 
     internal sealed class MusicSnapshot
     {
-        public string Key, Source, Title = "", Artist = "", Message = "";
+        public string Key, Source, LocalPath, Title = "", Artist = "", Album = "", Message = "";
         public BitmapSource Cover;
         public bool Playing, CanPrevious, CanToggle, CanNext;
         public TimeSpan Position, Duration;
@@ -161,7 +161,7 @@ namespace ClearDesk
                     return new MusicSnapshot
                     {
                         Key = selectedKey, Source = MusicSources.Identify(target.SourceAppUserModelId),
-                        Title = properties.Title ?? "", Artist = properties.Artist ?? "", Cover = cover,
+                        Title = properties.Title ?? "", Artist = properties.Artist ?? "", Album = properties.AlbumTitle ?? "", Cover = cover,
                         Playing = playing, CanPrevious = controls.IsPreviousEnabled,
                         CanToggle = controls.IsPlayPauseToggleEnabled || (playing ? controls.IsPauseEnabled : controls.IsPlayEnabled),
                         CanNext = controls.IsNextEnabled, Duration = duration > TimeSpan.Zero ? duration : TimeSpan.Zero,

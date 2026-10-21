@@ -2,7 +2,11 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.8.0**（本地待发布），维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.8.1**（本地待发布），维护者 [visual-life](https://github.com/visual-life)。
+
+## 1.8.1 新功能
+
+Dock 关闭操作置底；音乐组件增加可选同步歌词与本地 LRC 导入。详见 [1.8.1 更新说明](docs/releases/1.8.1.md)。
 
 ## 1.8.0 新功能
 
@@ -10,7 +14,7 @@
 
 ## 下载
 
-当前公开发行版仍为 1.7.0；1.8.0 源码和本地测试包已准备，尚未发布 GitHub Release。
+当前公开发行版仍为 1.7.0；1.8.1 源码和本地测试包已准备，尚未发布 GitHub Release。
 
 [下载 ClearDesk 1.7.0（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.7.0/ClearDesk-1.7.0-windows-x64-with-source.zip) · [版本说明与校验文件](https://github.com/visual-life/ClearDesk/releases/tag/v1.7.0)
 
