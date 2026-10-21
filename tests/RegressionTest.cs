@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -235,6 +235,7 @@ namespace ClearDesk
                 await DockTransitionsTest.Run(dock, Check);
                 await MusicTests.Run(Check);
                 await MenuThemeTests.Run(organizer, dock, Check);
+                await SettingsWindowTests.Run(Check);
                 results.Add("INFO: visibility uses real window handles with deterministic dispatch; foreground hook registration is self-tested, interactive browser switching was not rechecked.");
                 visibility.Dispose();
                 visibility = null;

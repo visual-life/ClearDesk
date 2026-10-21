@@ -2,13 +2,24 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.6.2**（公开发行包为 1.6.0），维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.7.0**（公开发行包为 1.6.0），维护者 [visual-life](https://github.com/visual-life)。
 
 ## 下载
 
 [下载 ClearDesk 1.6.0（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.6.0/ClearDesk-1.6.0-windows-x64-with-source.zip) · [版本说明与校验文件](https://github.com/visual-life/ClearDesk/releases/tag/v1.6.0)
 
 完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8。
+
+## 1.7.0 设置界面
+
+- 浅色分组卡片、柔和蓝色侧栏、统一开关、滑块与下拉菜单。
+- 六个设置分类与跨分类搜索，固定底部操作栏；原有配置继续使用。
+- 音乐来源与 Dock 玻璃／实时磨砂可在设置中选择。
+- 本次不改变桌面组件的材质实现、Dock 动画或音乐连接逻辑。
+
+<img src="docs/images/settings-1.7.0.png" width="900" alt="ClearDesk 1.7.0 设置界面，WPF 实际渲染">
+
+使用与变更见 [设置界面说明](docs/SETTINGS.md)。
 
 ## 1.6.0 更新重点
 
