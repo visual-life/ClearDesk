@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -90,13 +90,15 @@ namespace ClearDesk
             };
             MouseMove += delegate (object s, MouseEventArgs e)
             {
-                if (transitioning)
+                // Render/regression modes drive hover explicitly; do not let the user's pointer race those checks.
+                if (Program.Rendering || transitioning)
                     return;
                 cursor = e.GetPosition(canvas).X;
                 StartFrames();
             };
             MouseLeave += delegate
             {
+                if (Program.Rendering) return;
                 cursor = double.NaN;
                 StartFrames();
             };
@@ -390,6 +392,15 @@ namespace ClearDesk
                     Program.Log(e);
                 }
             }));
+            var close = Item("关闭应用", delegate
+            {
+                if (running.CloseApplication(entry) == 0)
+                    MessageBox.Show("未找到可关闭的窗口，或应用未接受关闭请求。", "ClearDesk");
+            });
+            close.ToolTip = "正常关闭该应用的所有窗口；未保存内容由应用自行提示。";
+            close.IsEnabled = entry.IsRunning;
+            menu.Opened += delegate { running.Refresh(); close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity)); };
+            menu.Items.Add(close);
             if (entry.Running != null && entry.Running.Windows.Count > 1)
             {
                 var windows = new MenuItem

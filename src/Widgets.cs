@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -25,7 +25,7 @@ namespace ClearDesk
 {
     public class GlassWindow : Window
     {
-        protected Grid Root = new Grid(), Body = new Grid();
+        protected Grid Root = new Grid { Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) }, Body = new Grid();
         protected Border Frame;
         protected BoxData State;
         protected StackPanel Layout = new StackPanel();
@@ -35,6 +35,7 @@ namespace ClearDesk
         protected GlassPane Surface;
         public bool WasClosed;
         bool ready;
+        Point? dragStart;
         public string ExportName
         {
             get
@@ -112,28 +113,26 @@ namespace ClearDesk
             Header.Children.Add(Heading);
             Layout.Children.Add(Header);
             Layout.Children.Add(Body);
-            Header.MouseLeftButtonDown += delegate (object s, MouseButtonEventArgs e)
+            Header.ToolTip = "拖动标题栏或组件空白区域移动；锁定后不可移动";
+            Root.MouseLeftButtonDown += delegate (object sender, MouseButtonEventArgs e)
             {
-                if (e.ClickCount == 1 && !State.Locked && e.OriginalSource == Heading)
+                if (State.Locked || this is LaunchpadWindow || this is DockWindow || WidgetDrag.IsInteractive(e.OriginalSource as DependencyObject, Root)) return;
+                if (e.ClickCount == 2 && HeaderDoubleClickCollapses && Header.IsMouseOver)
                 {
-                    try
-                    {
-                        DragMove();
-                        Program.Save();
-                    }
-                    catch
-                    {
-                    }
-
-                    e.Handled = true;
+                    State.Collapsed = !State.Collapsed; SetCollapsed(); Program.Save(); e.Handled = true; return;
                 }
-                else if (e.ClickCount == 2 && HeaderDoubleClickCollapses)
-                {
-                    State.Collapsed = !State.Collapsed;
-                    SetCollapsed();
-                    Program.Save();
-                }
+                dragStart = e.GetPosition(this);
             };
+            Root.MouseMove += delegate (object sender, MouseEventArgs e)
+            {
+                if (!dragStart.HasValue || State.Locked || e.LeftButton != MouseButtonState.Pressed) { dragStart = null; return; }
+                var point=e.GetPosition(this); var delta=point-dragStart.Value;
+                if (System.Math.Abs(delta.X)<SystemParameters.MinimumHorizontalDragDistance && System.Math.Abs(delta.Y)<SystemParameters.MinimumVerticalDragDistance) return;
+                dragStart=null;
+                try { DragMove(); Program.Save(); } catch (InvalidOperationException) { }
+                e.Handled=true;
+            };
+            PreviewMouseLeftButtonUp += delegate { dragStart=null; };
             LocationChanged += delegate
             {
                 UpdatePaper();
@@ -319,7 +318,7 @@ namespace ClearDesk
             };
             Timer.Tick += delegate
             {
-                action();
+                if (IsVisible && !State.Collapsed) action();
             };
             Timer.Start();
             action();
@@ -352,20 +351,6 @@ namespace ClearDesk
             s.Children.Add(d);
             c.Children.Add(s);
             Body.Children.Add(c);
-            c.MouseLeftButtonDown += delegate
-            {
-                if (!State.Locked)
-                {
-                    try
-                    {
-                        DragMove();
-                        Program.Save();
-                    }
-                    catch
-                    {
-                    }
-                }
-            };
             Tick(10000, delegate
             {
                 var now = DateTime.Now;
@@ -454,7 +439,7 @@ namespace ClearDesk
         Dictionary<string, CounterSample> gpuPrevious = new Dictionary<string, CounterSample>();
         async void Update()
         {
-            if (sampling || WasClosed)
+            if (sampling || WasClosed || (IsLoaded && (!IsVisible || State.Collapsed)))
                 return;
             sampling = true;
             try
@@ -668,76 +653,55 @@ namespace ClearDesk
 
     public class WeatherWindow : GlassWindow
     {
-        public static Dictionary<string, string> Cities = new Dictionary<string, string>
-        {
-            {
-                "北京",
-                "39.90,116.40"
-            },
-            {
-                "上海",
-                "31.23,121.47"
-            },
-            {
-                "广州",
-                "23.13,113.26"
-            },
-            {
-                "深圳",
-                "22.54,114.06"
-            },
-            {
-                "杭州",
-                "30.27,120.15"
-            },
-            {
-                "成都",
-                "30.57,104.07"
-            },
-            {
-                "武汉",
-                "30.59,114.31"
-            },
-            {
-                "南京",
-                "32.06,118.80"
-            },
-            {
-                "重庆",
-                "29.56,106.55"
-            },
-            {
-                "西安",
-                "34.34,108.94"
-            },
-            {
-                "天津",
-                "39.08,117.20"
-            },
-            {
-                "苏州",
-                "31.30,120.58"
-            }
-        };
-        TextBlock temp = Program.Text("—", 40), description = Program.Text("", 14), detail = Program.Text("", 12, "#C5D3E2");
+        TextBlock temp = Program.Text("—", 40), description = Program.Text("自动定位中…", 14), detail = Program.Text("", 12, "#C5D3E2");
+        readonly IWeatherService weather;
+        readonly System.Threading.CancellationTokenSource cancel = new System.Threading.CancellationTokenSource();
+        WeatherReading lastReading;
         bool busy;
-        DateTime fetched = DateTime.MinValue;
-        public WeatherWindow() : base(Program.Widget("weather", SystemParameters.WorkArea.Right - 370, 420, 350, 235), "天气")
+        DateTime retryAfter;
+        public WeatherWindow() : this(WeatherService.Shared) { }
+        internal WeatherWindow(IWeatherService service) : base(Program.Widget("weather", SystemParameters.WorkArea.Right - 370, 420, 350, 250), "天气")
         {
-            var p = new StackPanel();
-            p.Children.Add(temp);
-            p.Children.Add(description);
-            detail.Margin = new Thickness(0, 14, 0, 0);
-            p.Children.Add(detail);
-            p.Children.Add(Program.Text("数据：Open-Meteo · CC BY 4.0", 10, "#A8B7C9"));
-            Body.Children.Add(p);
-            ContextMenu.Items.Insert(0, Item("刷新天气", delegate
-            {
-                fetched = DateTime.MinValue;
-                Fetch();
-            }));
-            Tick(60000, Fetch);
+            weather=service;
+            var p=new StackPanel(); p.Children.Add(temp); p.Children.Add(description);
+            detail.Margin=new Thickness(0,10,0,8); p.Children.Add(detail);
+            p.Children.Add(Program.Text("天气：Open-Meteo · 定位：IPwho.is",10,"#A8B7C9")); Body.Children.Add(p);
+            ContextMenu.Items.Insert(0,Item("重新定位并刷新",delegate { _ = FetchAsync(true); }));
+            Tick(60000,delegate { _ = FetchAsync(false); });
+            Closed+=delegate { cancel.Cancel(); };
         }
+        internal async Task FetchAsync(bool force)
+        {
+            if(busy || WasClosed) return;
+            if(!Program.S.WeatherOnline)
+            {
+                temp.Text="未联网"; temp.FontSize=28; description.Text="在设置中开启自动天气联网";
+                detail.Text="按网络 IP 获取近似城市，不使用手选城市。"; return;
+            }
+            if(!force && DateTime.UtcNow<retryAfter) return;
+            busy=true; description.Text="正在自动定位并获取天气…";
+            try
+            {
+                var reading=await weather.ReadAsync(force,cancel.Token);
+                if(WasClosed || !Program.S.WeatherOnline) return;
+                lastReading=reading; temp.FontSize=40; temp.Text=reading.Temperature.ToString("0°");
+                description.Text=reading.City+" · "+Description(reading.Code);
+                detail.Text="湿度 "+reading.Humidity.ToString("0")+"%  ·  风速 "+reading.Wind.ToString("0.#")+" km/h\n天气时间 "+reading.Time+" · 自动定位（IP）";
+                detail.ToolTip="城市由网络 IP 推断，代理或 VPN 可能影响结果。"; retryAfter=DateTime.UtcNow.AddMinutes(20);
+            }
+            catch(Exception error)
+            {
+                if(WasClosed || cancel.IsCancellationRequested) return;
+                // Avoid recording URLs, IP responses or coordinates in user logs.
+                description.Text=lastReading==null?"自动天气暂不可用":lastReading.City+" · 更新失败";
+                detail.Text=lastReading==null?"请检查网络，右键重新定位并刷新。":"保留上次天气 · "+lastReading.Time+"\n右键可重新定位并刷新。";
+                detail.ToolTip=error is OperationCanceledException?"请求超时":"定位或天气服务暂不可用";
+                retryAfter=DateTime.UtcNow.AddMinutes(5);
+            }
+            finally { busy=false; }
+        }
+        internal string TestDescription { get { return description.Text; } }
+        internal string TestTemperature { get { return temp.Text; } }
 
         public static string Description(int code)
         {
@@ -760,67 +724,5 @@ namespace ClearDesk
             return "雷雨";
         }
 
-        async void Fetch()
-        {
-            if (busy || WasClosed)
-                return;
-            if (!Program.S.WeatherOnline)
-            {
-                temp.Text = "未联网";
-                temp.FontSize = 28;
-                description.Text = "在设置中开启天气联网";
-                detail.Text = "城市由你选择，不自动定位";
-                return;
-            }
-
-            if ((DateTime.Now - fetched).TotalMinutes < 20)
-                return;
-            busy = true;
-            string city = Program.S.City, coords;
-            if (!Cities.TryGetValue(city, out coords))
-                coords = Cities["上海"];
-            description.Text = city + " · 更新中";
-            try
-            {
-                using (var handler = new HttpClientHandler
-                {
-                    AllowAutoRedirect = false
-                }
-
-                )
-                using (var client = new HttpClient(handler))
-                {
-                    client.Timeout = TimeSpan.FromSeconds(12);
-                    string[] xy = coords.Split(',');
-                    string url = "https://api.open-meteo.com/v1/forecast?latitude=" + xy[0] + "&longitude=" + xy[1] + "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto";
-                    string json = await client.GetStringAsync(url);
-                    if (WasClosed)
-                        return;
-                    var j = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
-                    var c = (Dictionary<string, object>)j["current"];
-                    temp.FontSize = 40;
-                    temp.Text = Convert.ToDouble(c["temperature_2m"]).ToString("0°");
-                    description.Text = city + " · " + Description(Convert.ToInt32(c["weather_code"]));
-                    detail.Text = "湿度 " + c["relative_humidity_2m"] + "%  ·  风速 " + c["wind_speed_10m"] + " km/h\n观测时间 " + c["time"];
-                    fetched = DateTime.Now;
-                }
-            }
-            catch (Exception e)
-            {
-                Program.Log(e);
-                if (!WasClosed)
-                {
-                    description.Text = city + " · 更新失败";
-                    detail.Text = "网络暂不可用，右键可重试";
-                }
-
-                fetched = DateTime.Now.AddMinutes(-15);
-            }
-            finally
-            {
-                busy = false;
-            }
-        }
     }
-
 }

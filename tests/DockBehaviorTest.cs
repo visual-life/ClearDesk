@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -41,6 +41,8 @@ namespace ClearDesk
                 app.Shutdown();
             };
             timer.Start();
+            bool cancelOnce = Environment.GetCommandLineArgs().Contains("--cancel-close-once");
+            window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) { if(cancelOnce) { e.Cancel=true; cancelOnce=false; } };
             app.Run(window);
         }
 
@@ -68,7 +70,7 @@ namespace ClearDesk
 
                 var identity = ShellIdentity.Resolve(shortcut);
                 check(identity.Exe == AppIdentity.Normalize(Path.Combine(Program.Base, "ClearDesk.exe")), "shortcut is matched by executable identity");
-                one = Process.Start(new ProcessStartInfo(Path.Combine(Program.Base, "ClearDesk.exe"), "--dock-fixture") { UseShellExecute = false });
+                one = Process.Start(new ProcessStartInfo(Path.Combine(Program.Base, "ClearDesk.exe"), "--dock-fixture --cancel-close-once") { UseShellExecute = false });
                 two = Process.Start(new ProcessStartInfo(Path.Combine(Program.Base, "ClearDesk.exe"), "--dock-fixture") { UseShellExecute = false });
                 var monitor = dock.TestRunning;
                 RunningApp app = null;
@@ -82,6 +84,15 @@ namespace ClearDesk
                 }
 
                 check(app != null && app.Windows.Count == 2, "two windows of one application are grouped as one temporary Dock item");
+                using(var cachedMonitor=new RunningApps())
+                {
+                    var watch=Stopwatch.StartNew(); cachedMonitor.Refresh(); watch.Stop();
+                    int cold=cachedMonitor.MetadataReads; double coldMs=watch.Elapsed.TotalMilliseconds;
+                    watch.Restart(); for(int i=0;i<12;i++) cachedMonitor.Refresh(); watch.Stop();
+                    int warm=cachedMonitor.MetadataReads-cold;
+                    check(cold>=2 && warm==0,"12 repeated Dock scans reuse metadata for real test windows without additional COM lookups");
+                    File.WriteAllText(Path.Combine(Program.Base,"dock-scan-cache.txt"),"Cold metadata reads: "+cold+"\nAdditional reads across 12 warm scans: "+warm+"\nCold scan ms: "+coldMs.ToString("0.00",System.Globalization.CultureInfo.InvariantCulture)+"\nMean warm scan ms: "+(watch.Elapsed.TotalMilliseconds/12).ToString("0.00",System.Globalization.CultureInfo.InvariantCulture)+"\n");
+                }
                 dock.Rebuild();
                 check(dock.TestTemporaryCount > 0 && dock.TestHasSeparator, "running unpinned applications create the temporary section and separator");
                 Program.S.Pins.Add(shortcut);
@@ -108,13 +119,12 @@ namespace ClearDesk
                 Program.S.Pins.Add(shortcut);
                 Program.Save();
                 dock.Rebuild();
-                var first = app.Windows[0];
-                Native.PostMessage(first, 0x10, IntPtr.Zero, IntPtr.Zero);
+                check(monitor.CloseApplication(matched[0])==2, "Dock close sends normal close requests to all application windows");
                 await Task.Delay(500);
                 monitor.Refresh();
                 app = monitor.Apps.FirstOrDefault(a => AppIdentity.Matches(a.Identity, identity));
-                check(app != null && app.Windows.Count == 1, "closing one window keeps application and running dot");
-                Native.PostMessage(app.Windows[0], 0x10, IntPtr.Zero, IntPtr.Zero);
+                check(app != null && app.Windows.Count == 1 && !one.HasExited, "application can cancel Dock close and retain its window and running dot");
+                check(monitor.CloseApplication(matched[0])==1, "Dock close retries the surviving application window without terminating its process");
                 await Task.Delay(500);
                 monitor.Refresh();
                 entries = monitor.Entries(Program.S.Pins);

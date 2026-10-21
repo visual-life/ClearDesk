@@ -34,7 +34,6 @@ namespace ClearDesk
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
-        public string City = "上海";
         public string MusicSource = "auto";
         public List<BoxData> Boxes = new List<BoxData>();
         public List<string> Pins = new List<string>();
@@ -98,7 +97,7 @@ namespace ClearDesk
                 return;
             }
 
-            Rendering = args.Contains("--popup-benchmark") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
+            Rendering = args.Contains("--weather-test") || args.Contains("--popup-benchmark") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
             Preview = args.Contains("--preview") || Rendering || args.Contains("--integration-test");
             if (Preview)
                 Data = Path.Combine(Base, "preview-data");
@@ -167,12 +166,14 @@ namespace ClearDesk
                 Rebuild();
             }
 
-            if (!args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
+            if (!args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
                 ShowSettings();
             if (args.Contains("--popup-benchmark"))
                 PopupBenchmark.Start();
             if (args.Contains("--regression-test"))
                 RegressionTest.Start();
+            if (args.Contains("--weather-test"))
+                FeatureTests.LiveWeather();
             if (args.Contains("--benchmark"))
                 Benchmark.Start();
             if (args.Contains("--integration-test"))
@@ -448,6 +449,24 @@ namespace ClearDesk
             S.Boxes.Add(b);
             Save();
             AddWindow(new OrganizerWindow(b));
+        }
+
+        internal static void SendToOrganizer(string path, BoxData target)
+        {
+            if (!File.Exists(path) && !Directory.Exists(path))
+                throw new FileNotFoundException("项目已不存在，请刷新启动台。", path);
+            if (target == null)
+            {
+                target = new BoxData { Title = "新的收纳格", X = 70, Y = 100, Width = 420, Height = 300 };
+                S.Boxes.Add(target);
+            }
+            if (!target.Items.Contains(path, StringComparer.OrdinalIgnoreCase)) target.Items.Add(path);
+            target.Excluded.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+            target.Enabled = true; target.Collapsed = false; target.Height = Math.Max(170, target.Height);
+            Save();
+            var existing = windows.OfType<OrganizerWindow>().FirstOrDefault(w => w.ExportName == target.Id && !w.WasClosed);
+            if (existing == null) AddWindow(new OrganizerWindow(target));
+            else existing.RefreshReferences();
         }
 
         public static BoxData Widget(string id, double x, double y, double width, double height)

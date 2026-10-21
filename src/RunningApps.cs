@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -107,6 +107,19 @@ namespace ClearDesk
         readonly Dictionary<string, DateTime> launches = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, IntPtr> recent = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
         readonly List<string> order = new List<string>();
+        sealed class WindowMetadata { internal uint Pid; internal string AppId; internal DateTime Expires; }
+        readonly Dictionary<IntPtr, WindowMetadata> windowMetadata = new Dictionary<IntPtr, WindowMetadata>();
+        static readonly Dictionary<string, string> descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        internal int MetadataReads { get; private set; }
+        string WindowIdentity(IntPtr window, uint pid)
+        {
+            WindowMetadata cached;
+            if (windowMetadata.TryGetValue(window, out cached) && cached.Pid == pid && cached.Expires > DateTime.UtcNow) return cached.AppId;
+            MetadataReads++;
+            var id = ShellIdentity.WindowAppId(window);
+            windowMetadata[window] = new WindowMetadata { Pid=pid, AppId=id, Expires=DateTime.UtcNow.AddSeconds(10) };
+            return id;
+        }
         readonly uint ownPid = (uint)Process.GetCurrentProcess().Id;
         DispatcherTimer timer;
         bool disposed;
@@ -132,6 +145,7 @@ namespace ClearDesk
         {
             if (disposed)
                 return;
+            var seen = new HashSet<IntPtr>();
             var groups = new Dictionary<string, RunningApp>(StringComparer.OrdinalIgnoreCase);
             var processIds = new Dictionary<uint, AppIdentity>();
             IntPtr foreground = Native.GetForegroundWindow();
@@ -169,7 +183,8 @@ namespace ClearDesk
 
                     if (process == null)
                         return true;
-                    string windowId = ShellIdentity.WindowAppId(h);
+                    seen.Add(h);
+                    string windowId = WindowIdentity(h, pid);
                     string id = string.IsNullOrEmpty(windowId) ? process.AppId : windowId;
                     string key = string.IsNullOrEmpty(id) ? process.Exe : "app:" + id.ToLowerInvariant();
                     if (string.IsNullOrEmpty(key))
@@ -202,6 +217,7 @@ namespace ClearDesk
 
                 return true;
             }, IntPtr.Zero);
+            foreach (var handle in windowMetadata.Keys.Where(h => !seen.Contains(h)).ToArray()) windowMetadata.Remove(handle);
             order.RemoveAll(k => !groups.ContainsKey(k));
             foreach (string key in groups.Keys)
                 if (!order.Contains(key))
@@ -231,9 +247,11 @@ namespace ClearDesk
                 return null;
             try
             {
-                var path = new StringBuilder(32768);
+                var path = new StringBuilder(1024);
                 int count = path.Capacity;
-                string exe = QueryFullProcessImageName(handle, 0, path, ref count) ? AppIdentity.Normalize(path.ToString()) : null;
+                bool gotPath = QueryFullProcessImageName(handle, 0, path, ref count);
+                if (!gotPath) { path = new StringBuilder(32768); count = path.Capacity; gotPath = QueryFullProcessImageName(handle, 0, path, ref count); }
+                string exe = gotPath ? AppIdentity.Normalize(path.ToString()) : null;
                 uint length = 0;
                 GetApplicationUserModelId(handle, ref length, null);
                 string id = null;
@@ -251,9 +269,14 @@ namespace ClearDesk
                 {
                     try
                     {
-                        string display = FileVersionInfo.GetVersionInfo(exe).FileDescription;
-                        if (!string.IsNullOrWhiteSpace(display))
-                            name = display;
+                        string display;
+                        if (!descriptions.TryGetValue(exe, out display))
+                        {
+                            display = FileVersionInfo.GetVersionInfo(exe).FileDescription;
+                            if (descriptions.Count >= 256) descriptions.Clear();
+                            descriptions[exe] = display;
+                        }
+                        if (!string.IsNullOrWhiteSpace(display)) name = display;
                     }
                     catch
                     {
@@ -322,6 +345,24 @@ namespace ClearDesk
             Program.OpenItem(path);
         }
 
+        public int CloseApplication(DockEntry entry)
+        {
+            Refresh();
+            var app = Apps.FirstOrDefault(a => AppIdentity.Matches(a.Identity, entry.Identity));
+            if (app == null) return 0;
+            int sent = 0;
+            foreach (var window in app.Windows.ToArray())
+            {
+                uint pid; Native.GetWindowThreadProcessId(window, out pid);
+                // Recheck identity immediately before sending WM_CLOSE, never terminate a process.
+                var identity = ProcessIdentity(pid);
+                if (pid == ownPid || !Native.IsWindow(window) || identity == null ||
+                    !string.Equals(identity.Exe, app.Identity.Exe, StringComparison.OrdinalIgnoreCase)) continue;
+                if (Native.PostMessage(window, 0x10, IntPtr.Zero, IntPtr.Zero)) sent++;
+            }
+            return sent;
+        }
+
         internal static void Activate(IntPtr window)
         {
             if (!Native.IsWindow(window))
@@ -370,6 +411,7 @@ namespace ClearDesk
             disposed = true;
             if (timer != null)
                 timer.Stop();
+            windowMetadata.Clear();
             Changed = null;
         }
     }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -171,6 +171,16 @@ namespace ClearDesk
                 Program.Save();
             }));
             ContextMenu.Items.Insert(5, Item("重命名收纳格", Rename));
+            var create = new MenuItem { Header = "新建" };
+            create.Items.Add(Item("文件夹", delegate { OrganizerFiles.Prompt(this, State, "新建文件夹", true, Refresh); }));
+            create.Items.Add(Item("文本文档", delegate { OrganizerFiles.Prompt(this, State, "新建文本文档.txt", false, Refresh); }));
+            create.Items.Add(Item("Markdown 文档", delegate { OrganizerFiles.Prompt(this, State, "新建文档.md", false, Refresh); }));
+            ContextMenu.Items.Add(create);
+            ContextMenu.Items.Add(Item("打开新建文件所在文件夹", delegate
+            {
+                string folder = OrganizerFiles.Folder(State); Directory.CreateDirectory(folder);
+                Program.OpenItem(folder);
+            }));
             Refresh();
             Watch();
             Closed += delegate
@@ -390,6 +400,11 @@ namespace ClearDesk
                 {
                     Program.Log(e);
                 }
+        }
+
+        internal void RefreshReferences()
+        {
+            SetCollapsed(); Refresh();
         }
 
         internal FluidGrid TestGrid

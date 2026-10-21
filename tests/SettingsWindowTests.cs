@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -41,6 +41,8 @@ namespace ClearDesk
                 bool allPages=true;
                 for(int i=0;i<6;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
                 check(allPages,"all six settings categories render without losing their cards");
+                window.TestSearch("所在地自动获取"); window.UpdateLayout();
+                check(Children<ComboBox>(window).Count()==0 && Children<TextBlock>(window).Any(t=>t.Text.Contains("无手选城市")),"weather settings expose only automatic location without a manual city selector");
                 window.TestSearch("音乐来源"); window.UpdateLayout();
                 check(window.TestCards==1 && Children<ComboBox>(window).Count()==1,"search finds settings outside the selected category");
                 var source=Children<ComboBox>(window).Single(); source.SelectedIndex=1;

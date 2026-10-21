@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -119,20 +119,7 @@ namespace ClearDesk
                 Program.OpenItem(path);
                 Close();
             };
-            icons.MenuFor = delegate (string path)
-            {
-                var menu = new ContextMenu();
-                menu.Items.Add(Item("固定到 Dock", delegate
-                {
-                    if (!Program.S.Pins.Contains(path))
-                    {
-                        Program.S.Pins.Add(path);
-                        Program.Save();
-                        Program.RefreshDock();
-                    }
-                }));
-                return menu;
-            };
+            icons.MenuFor = BuildItemMenu;
             paths = Program.DesktopItems().Concat(Program.S.LaunchpadItems).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             Refresh();
             KeyDown += delegate (object s, KeyEventArgs e)
@@ -205,6 +192,30 @@ namespace ClearDesk
                     System.Threading.Tasks.Task.Run(() => watcher.Dispose());
                 }
             };
+        }
+
+        internal ContextMenu BuildItemMenu(string path)
+        {
+            var menu = new ContextMenu();
+            menu.Items.Add(Item("固定到 Dock", delegate
+            {
+                if (!Program.S.Pins.Contains(path)) { Program.S.Pins.Add(path); Program.Save(); Program.RefreshDock(); }
+            }));
+            var send = new MenuItem { Header = "发送至桌面收纳" };
+            foreach (var box in Program.S.Boxes)
+            {
+                var target = box;
+                send.Items.Add(Item(box.Title + (box.Enabled ? "" : "（已关闭）"), delegate { SendItem(path, target); }));
+            }
+            if (send.Items.Count > 0) send.Items.Add(new Separator());
+            send.Items.Add(Item("新建收纳格并添加", delegate { SendItem(path, null); }));
+            menu.Items.Add(send);
+            return menu;
+        }
+        void SendItem(string path, BoxData box)
+        {
+            try { Program.SendToOrganizer(path, box); }
+            catch (Exception error) { MessageBox.Show(error.Message, "未能添加到收纳"); }
         }
 
         protected override void Material(string material)

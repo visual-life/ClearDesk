@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -138,7 +138,7 @@ namespace ClearDesk
             local.MediaFailed += delegate { playing = false; localError = "无法播放此格式，请使用 MP3 / WAV"; if (!closed) Render(); };
             local.MediaOpened += delegate { if (!closed) Render(); };
             Timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(750) };
-            Timer.Tick += delegate { Refresh(); };
+            Timer.Tick += delegate { if (IsVisible && !State.Collapsed) Refresh(); };
             Loaded += delegate { Timer.Start(); Refresh(); };
             Closed += delegate
             {

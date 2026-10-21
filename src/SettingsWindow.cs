@@ -12,7 +12,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "1.7.0";
+        internal const string Version = "1.8.0";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -183,10 +183,10 @@ namespace ClearDesk
             Toggle(g,"性能","CPU、GPU、内存与网络。",state.Performance,v=>state.Performance=v);
             Toggle(g,"日历","查看日期。",state.Calendar,v=>state.Calendar=v);
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
-            Toggle(g,"天气","显示所选城市的天气。",state.Weather,v=>state.Weather=v);
+            Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
             g=AddGroup(4,"天气与隐私");
-            Toggle(g,"允许天气联网","仅发送所选城市坐标，无自动定位。",state.WeatherOnline,v=>state.WeatherOnline=v);
-            var cities=WeatherWindow.Cities.Keys.ToArray(); Choice(g,"天气城市","天气由 Open-Meteo 提供。",cities,Array.IndexOf(cities,state.City),i=>state.City=cities[i]);
+            Toggle(g,"自动天气联网","IPwho.is 获取近似城市，Open-Meteo 接收城市坐标获取天气。",state.WeatherOnline,v=>state.WeatherOnline=v);
+            Row(g,"所在地自动获取","仅自动定位，无手选城市。代理或 VPN 可能影响城市；右键天气可重新定位。不保存 IP 或坐标。");
             g=AddGroup(5,"ClearDesk");
             Row(g,"清透桌面","版本 "+Version+" · 维护者 visual-life");
             Row(g,"本地配置","配置保存在本机，无账户、广告或遥测。",ActionButton("打开配置目录",delegate { Process.Start(new ProcessStartInfo(Program.Data){UseShellExecute=true}); }));
