@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -128,6 +128,7 @@ namespace ClearDesk
         public event Action Changed;
         public void Start()
         {
+            ForegroundTracker.Start();
             Refresh();
             timer = new DispatcherTimer(DispatcherPriority.Background)
             {
@@ -330,7 +331,12 @@ namespace ClearDesk
             var app = Apps.FirstOrDefault(a => AppIdentity.Matches(entry.Identity, a.Identity));
             if (app != null && app.Windows.Count > 0)
             {
-                Activate(app.Preferred);
+                // Like the taskbar: clicking the app that was in the foreground minimizes it.
+                IntPtr target;
+                if (DockClick.Decide(app.Windows, app.Preferred, ForegroundTracker.Last, Native.IsIconic, ForegroundTracker.RootOwner, out target) == DockClick.Action.Minimize)
+                    ShowWindowAsync(target, 6);
+                else
+                    Activate(target);
                 return;
             }
 
@@ -543,6 +549,59 @@ namespace ClearDesk
                 LaunchPath = path,
                 Name = Program.DisplayName(path)
             };
+        }
+    }
+
+    // Decides what a Dock click on a running app does (pure, testable).
+    internal static class DockClick
+    {
+        internal enum Action { Activate, Minimize }
+        internal static Action Decide(IList<IntPtr> windows, IntPtr preferred, IntPtr lastForeground, Func<IntPtr, bool> iconic, Func<IntPtr, IntPtr> rootOwner, out IntPtr target)
+        {
+            target = preferred;
+            if (lastForeground != IntPtr.Zero)
+            {
+                IntPtr root = rootOwner(lastForeground);
+                foreach (var w in windows)
+                    if ((w == lastForeground || w == root) && !iconic(w))
+                    {
+                        target = w;
+                        return Action.Minimize;
+                    }
+            }
+            if (target == IntPtr.Zero && windows.Count > 0) target = windows[0];
+            return Action.Activate;
+        }
+    }
+
+    // Remembers the last foreground window that is not ClearDesk's own, because clicking
+    // the Dock activates the Dock itself before the click handler runs.
+    internal static class ForegroundTracker
+    {
+        static Native.EventProc proc;
+        static IntPtr hook;
+        static readonly uint own = (uint)Process.GetCurrentProcess().Id;
+        internal static IntPtr Last;
+        [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+        internal static IntPtr RootOwner(IntPtr h) { var r = GetAncestor(h, 3); return r == IntPtr.Zero ? h : r; }
+        internal static void Start()
+        {
+            if (hook != IntPtr.Zero) return;
+            proc = delegate (IntPtr hk, uint evt, IntPtr h, int obj, int child, uint thread, uint time)
+            {
+                if (obj != 0 || h == IntPtr.Zero) return;
+                if (evt == 0x16) { if (RootOwner(Last) == RootOwner(h)) Last = IntPtr.Zero; return; }
+                if (evt == 3) Observe(h);
+            };
+            hook = Native.SetWinEventHook(3, 0x16, IntPtr.Zero, proc, 0, 0, 0);
+            Observe(Native.GetForegroundWindow());
+        }
+        internal static void Observe(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return;
+            uint pid; Native.GetWindowThreadProcessId(h, out pid);
+            if (pid == own) return;
+            Last = h;
         }
     }
 }

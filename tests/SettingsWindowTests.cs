@@ -39,8 +39,8 @@ namespace ClearDesk
                 check(window.TestCards==2 && Children<CheckBox>(window).Count()==9,"settings general page contains the eight original desktop and window switches plus GPU rendering");
                 Capture(window,"settings-general");
                 bool allPages=true;
-                for(int i=0;i<6;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
-                check(allPages,"all six settings categories render without losing their cards");
+                for(int i=0;i<7;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
+                check(allPages,"all seven settings categories (incl. 组件管理) render without losing their cards");
                 window.TestSearch("所在地自动获取"); window.UpdateLayout();
                 check(Children<ComboBox>(window).Count()==0 && Children<TextBlock>(window).Any(t=>t.Text.Contains("无手选城市")),"weather settings expose only automatic location without a manual city selector");
                 window.TestSearch("音乐来源"); window.UpdateLayout();
@@ -50,7 +50,7 @@ namespace ClearDesk
                 source.IsDropDownOpen=true; await Task.Delay(60);
                 check(source.ItemContainerGenerator.ContainerFromIndex(0)!=null,"light themed source selector generates accessible choices"); source.IsDropDownOpen=false;
                 window.TestSelect(2); window.UpdateLayout();
-                var toggle=Children<CheckBox>(window).Single(); toggle.IsChecked=!oldDock; toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                var toggle=Children<CheckBox>(window).Single(c=>AutomationProperties.GetName(c)=="显示 Dock 栏"); toggle.IsChecked=!oldDock; toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 check(Program.S.Dock==!oldDock,"Dock switch retains the original configuration behavior");
                 var slider=Children<Slider>(window).Single(); slider.Value=57;
                 window.TestSelect(0); window.TestSelect(2); window.UpdateLayout();

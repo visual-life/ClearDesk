@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -176,6 +176,12 @@ namespace ClearDesk
             create.Items.Add(Item("文本文档", delegate { OrganizerFiles.Prompt(this, State, "新建文本文档.txt", false, Refresh); }));
             create.Items.Add(Item("Markdown 文档", delegate { OrganizerFiles.Prompt(this, State, "新建文档.md", false, Refresh); }));
             ContextMenu.Items.Add(create);
+            ContextMenu.Items.Add(new Separator());
+            ContextMenu.Items.Add(Item("删除收纳格", delegate
+            {
+                var entry = WidgetManager.List().FirstOrDefault(x => x.Kind == "box" && x.Data == State);
+                if (entry != null) WidgetManager.Delete(entry, text => MessageBox.Show(text, "ClearDesk · 删除收纳格", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
+            }));
             ContextMenu.Items.Add(Item("打开新建文件所在文件夹", delegate
             {
                 string folder = OrganizerFiles.Folder(State); Directory.CreateDirectory(folder);
@@ -315,6 +321,15 @@ namespace ClearDesk
             return menu;
         }
 
+        internal void SetTitle(string title)
+        {
+            State.Title = title;
+            Heading.Text = "▦   " + title;
+            Title = "ClearDesk · " + title;
+        }
+
+        internal string TestHeading { get { return Heading.Text; } }
+
         void Rename()
         {
             var dialog = new Window
@@ -339,8 +354,7 @@ namespace ClearDesk
             {
                 if (!string.IsNullOrWhiteSpace(name.Text))
                 {
-                    State.Title = name.Text.Trim();
-                    Heading.Text = "▦   " + State.Title;
+                    SetTitle(name.Text.Trim());
                     Program.Save();
                 }
 

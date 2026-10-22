@@ -7,7 +7,7 @@
          xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap uap10 desktop4 desktop5 com rescap">
-  <Identity Name="ClearDesk.ShellMenu" Publisher="CN=ClearDesk Local Shell Menu" Version="2.0.2.0" ProcessorArchitecture="x64" />
+  <Identity Name="ClearDesk.ShellMenu" Publisher="CN=ClearDesk Local Shell Menu" Version="2.0.3.0" ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>ClearDesk 妗岄潰鑿滃崟</DisplayName>
     <PublisherDisplayName>visual-life</PublisherDisplayName>

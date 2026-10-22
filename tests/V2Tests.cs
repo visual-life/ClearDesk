@@ -169,6 +169,9 @@ namespace ClearDesk
             Program.S.Clock = clock;
 
             // drag with snapping (programmatic)
+            // Keep other widgets (e.g. a full-width Dock when many apps run) out of the snap test.
+            var others = Program.OpenWindows.Where(w => w != organizer && w.IsVisible).ToList();
+            foreach (var o in others) o.Hide();
             organizer.Left = 300; organizer.Top = 300;
             var area = SystemParameters.WorkArea;
             bool magnet = Program.S.Magnet;
@@ -184,6 +187,7 @@ namespace ClearDesk
             Program.S.Magnet = magnet;
             GuideOverlay.Hide();
             organizer.Left = 20; organizer.Top = 20;
+            foreach (var o in others) o.Show();
 
             // Windows 11 top-level menu: status + moved-folder detection
             check(ModernMenu.Status(null) == ModernMenu.State.Off && ModernMenu.Status(Program.Base + "\\") == ModernMenu.State.On && ModernMenu.Status(@"D:\elsewhere\ClearDesk") == ModernMenu.State.Moved && ModernMenu.Status("") == ModernMenu.State.Moved, "top-level menu status distinguishes off / on / moved folder");

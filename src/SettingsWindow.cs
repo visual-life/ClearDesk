@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shell;
 
@@ -12,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.2";
+        internal const string Version = "2.0.3";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -72,16 +73,16 @@ namespace ClearDesk
             search.TextChanged += delegate { placeholder.Visibility = search.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; Render(); };
             top.Children.Add(searchBox); sidebar.Children.Add(top);
             var nav = new StackPanel { Margin = new Thickness(12,0,12,0) };
-            string[] names = { "通用", "桌面收纳", "Dock 栏", "音乐组件", "外观与材质", "关于" };
-            string[] glyphs = { "\uE713", "\uE80A", "\uE7F4", "\uE8D6", "\uE790", "\uE946" };
+            string[] names = { "通用", "桌面收纳", "Dock 栏", "音乐组件", "外观与材质", "关于", "组件管理" };
+            string[] glyphs = { "\uE713", "\uE80A", "\uE7F4", "\uE8D6", "\uE790", "\uE946", "\uECA5" };
             for (int i = 0; i < names.Length; i++)
             {
                 int index = i; var page = new Page { Name = names[i] };
                 var item = new StackPanel { Orientation = Orientation.Horizontal };
                 var glyph = Label(glyphs[i], 19); glyph.FontFamily = new FontFamily("Segoe MDL2 Assets"); glyph.ClearValue(TextBlock.ForegroundProperty); glyph.Width = 33;
                 var caption = Label(names[i],14); caption.ClearValue(TextBlock.ForegroundProperty); item.Children.Add(glyph); item.Children.Add(caption);
-                var button = ActionButton("", delegate { selected = index; search.Text = ""; Render(); }); button.Content = item;
-                button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.Padding = new Thickness(16,13,8,13); button.Margin = new Thickness(0,3,0,3);
+                var button = ActionButton("", delegate { selected = index; search.Text = ""; if (index == ManagerPage) BuildManager(); Render(); }); button.Content = item;
+                button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.Padding = new Thickness(16,11,8,11); button.Margin = new Thickness(0,2,0,2);
                 AutomationProperties.SetName(button, names[i]); page.Navigation = button; pages.Add(page); nav.Children.Add(button);
             }
             Grid.SetRow(nav,1); sidebar.Children.Add(nav);
@@ -102,7 +103,8 @@ namespace ClearDesk
             chrome.Children.Add(minimize); chrome.Children.Add(maximize); chrome.Children.Add(Caption("\uE8BB", "关闭设置", Close));
             Grid.SetColumn(chrome,1); layout.Children.Add(chrome);
             Content = layout;
-            BuildPages(startup); Render();
+            BuildPages(startup); BuildManager(); Render();
+            Activated += delegate { if (selected == ManagerPage && search.Text.Length == 0 && !editing) RefreshManager(); };
         }
         Button Caption(string glyph, string name, Action action)
         {
@@ -169,10 +171,11 @@ namespace ClearDesk
             g=AddGroup(2,"Dock 与启动台");
             Toggle(g,"显示 Dock 栏","固定常用应用，查看正在运行的程序。",state.Dock,v => state.Dock=v);
             Range(g,"图标大小","调整 Dock 的基础图标尺寸。",32,72,state.DockSize," px",v => state.DockSize=v);
+            Toggle(g,"窗口遮挡时自动隐藏","其他应用的窗口挡住 Dock 时，Dock 向下滑出屏幕；鼠标移到屏幕底部边缘即可唤出，遮挡结束后自动回来。",state.DockAutoHide,v => { state.DockAutoHide=v; Program.RefreshDockAutoHide(); });
             Row(g,"桌面启动台","快速查找并打开桌面项目。",ActionButton("打开启动台",Program.Launchpad));
             var launchpad=Program.Widget("launchpad",0,0,880,520);
             Choice(g,"启动台材质","磨砂会实时模糊启动台后方的窗口和桌面；也可在启动台空白处右键切换。",new[]{"玻璃 · 实时清透","磨砂 · 实时模糊"},launchpad.Material=="frosted"?1:0,i => { launchpad.Material=i==1?"frosted":"liquid"; launchpad.MaterialSelected=true; Program.Save(); });
-            Row(g,"使用方式","拖动调整顺序；右键固定应用。点击运行中的应用切回已有窗口。");
+            Row(g,"使用方式","拖动调整顺序；右键固定应用。点击运行中的应用切回它的窗口；若它已在最前面，再点一次会最小化（与任务栏一致）。");
             g=AddGroup(3,"音乐控制");
             Toggle(g,"显示音乐组件","显示歌曲信息，控制播放、上一首和下一首。",state.Music,v => state.Music=v);
             var sources=new[]{"auto","qq","netease","kugou","local"};
@@ -244,7 +247,7 @@ namespace ClearDesk
             if (pages.Count==0) return;
             string query=search.Text.Trim(); bool filtering=query.Length>0;
             heading.Text=filtering?"搜索结果":pages[selected].Name;
-            subtitle.Text=filtering?"查找与“"+query+"”相关的设置。":selected==0?"让桌面保持整洁，让常用触手可及。":"按你的习惯，调整每一个细节。";
+            subtitle.Text=filtering?"查找与“"+query+"”相关的设置。":selected==0?"让桌面保持整洁，让常用触手可及。":selected==ManagerPage?"在一处查看、定位和管理所有桌面组件。":"按你的习惯，调整每一个细节。";
             content.Children.Clear(); int found=0;
             for(int i=0;i<pages.Count;i++)
             {
@@ -264,6 +267,110 @@ namespace ClearDesk
             if(found==0) { var empty=Label("没有找到相关设置，试试“图标”“音乐”或“材质”。",14,"#7D889B"); empty.Margin=new Thickness(0,20,0,0); content.Children.Add(empty); }
             if(scroll!=null) scroll.ScrollToTop();
         }
+        const int ManagerPage = 6;
+        bool editing;
+        static Border Pill(string text)
+        {
+            string bg = text == "已关闭" ? "#F1F3F7" : text == "已锁定" ? "#FFF4E5" : "#E8F7EE";
+            string fg = text == "已关闭" ? "#6B778C" : text == "已锁定" ? "#9A4A00" : "#147A3D";
+            var t = Label(text, 11.5, fg); t.TextAlignment = TextAlignment.Center;
+            return new Border { Background = Color(bg), CornerRadius = new CornerRadius(10), Padding = new Thickness(9,3,9,3), MinWidth = 58, Margin = new Thickness(0,0,12,0), Child = t, VerticalAlignment = VerticalAlignment.Center };
+        }
+        Button Small(string text, Action action, string name, bool danger = false)
+        {
+            var b = ActionButton(text, action); b.Margin = new Thickness(6,0,0,0); b.MinWidth = 52; b.Padding = new Thickness(10,5,10,5);
+            if (danger) { b.Foreground = Color("#C2410C"); }
+            AutomationProperties.SetName(b, name); return b;
+        }
+        bool ConfirmDelete(string text)
+        {
+            if (TestConfirm != null) return TestConfirm(text);
+            return MessageBox.Show(this, text, "ClearDesk · 删除组件", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+        }
+        internal Func<string,bool> TestConfirm;
+        internal List<WidgetEntry> TestEntries;
+
+        void BuildManager()
+        {
+            var page = pages[ManagerPage]; page.Groups.Clear();
+            var entries = WidgetManager.List(); TestEntries = entries;
+            var g = AddGroup(ManagerPage, "组件管理");
+            Button create;
+            var menu = new ContextMenu();
+            foreach (var kind in WidgetCatalog.Kinds)
+            {
+                string id = kind.Key; var mi = new MenuItem { Header = kind.Value };
+                mi.Click += delegate { Program.NewWidget(id); RefreshManager(); };
+                menu.Items.Add(mi);
+            }
+            MenuTheme.Decorate(menu);
+            create = new Button { Content = "新建组件", Background = Color("#1677FF"), Foreground = Brushes.White, BorderBrush = Color("#1677FF") };
+            create.Click += delegate { menu.PlacementTarget = create; menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom; menu.IsOpen = true; };
+            AutomationProperties.SetName(create, "新建组件");
+            Row(g, "关闭与删除", "“关闭”只是从桌面隐藏，内容、位置和设置都保留，可随时重新显示；“删除”会永久移除该组件及其保存的数据（便签文字、收纳格引用等），但绝不会删除你的真实文件。", create);
+            AddManagerGroup("桌面组件", entries.Where(e => WidgetManager.Singletons.Contains(e.Kind)));
+            AddManagerGroup("便签", entries.Where(e => e.Kind == "note"), "还没有便签。点击上方“新建组件”→ 便签。");
+            AddManagerGroup("桌面收纳", entries.Where(e => e.Kind == "box"), "还没有收纳格。");
+        }
+
+        void AddManagerGroup(string title, IEnumerable<WidgetEntry> items, string empty = null)
+        {
+            var list = items.ToList();
+            var g = AddGroup(ManagerPage, title + "（" + list.Count + "）");
+            if (list.Count == 0 && empty != null) Row(g, empty, null);
+            foreach (var e in list) ManagerRow(g, e);
+        }
+
+        void ManagerRow(Group g, WidgetEntry e)
+        {
+            var entry = e;
+            var row = new Grid(); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var labels = new StackPanel { Margin = new Thickness(0,8,16,8), VerticalAlignment = VerticalAlignment.Center };
+            if (e.Kind == "box")
+            {
+                var name = new TextBox { Text = e.Name, FontSize = 14, MinWidth = 180, MaxWidth = 320, HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(6,3,6,3), ToolTip = "点击即可重命名，回车保存" };
+                AutomationProperties.SetName(name, "收纳格名称");
+                string original = e.Name;
+                name.GotKeyboardFocus += delegate { editing = true; };
+                name.TextChanged += delegate { if (!string.IsNullOrWhiteSpace(name.Text)) WidgetManager.Rename(entry, name.Text, false); };
+                Action commit = delegate
+                {
+                    editing = false;
+                    if (string.IsNullOrWhiteSpace(name.Text)) { name.Text = original; WidgetManager.Rename(entry, original, true); return; }
+                    WidgetManager.Rename(entry, name.Text, true); original = entry.Name; status.Text = "已重命名为“" + entry.Name + "”。";
+                };
+                name.LostKeyboardFocus += delegate { commit(); };
+                name.KeyDown += (s, k) => { if (k.Key == System.Windows.Input.Key.Enter) { commit(); Keyboard.ClearFocus(); } else if (k.Key == System.Windows.Input.Key.Escape) { name.Text = original; commit(); Keyboard.ClearFocus(); } };
+                labels.Children.Add(name);
+            }
+            else labels.Children.Add(Label(e.Name));
+            var hint = Label(e.Detail, 12, "#7D889B"); hint.Margin = new Thickness(0,4,0,0); labels.Children.Add(hint);
+            row.Children.Add(labels);
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            actions.Children.Add(Pill(e.Status));
+            actions.Children.Add(Small(e.Visible ? "关闭" : "显示", delegate
+            {
+                WidgetManager.SetVisible(entry, !entry.Visible);
+                status.Text = entry.Visible ? "已显示“" + entry.Name + "”。" : "已关闭“" + entry.Name + "”，可随时重新显示。"; RefreshManager();
+            }, (e.Visible ? "关闭 " : "显示 ") + e.Name));
+            actions.Children.Add(Small("定位", delegate { WidgetManager.Locate(entry); RefreshManager(); }, "定位 " + e.Name));
+            actions.Children.Add(Small("删除", delegate
+            {
+                if (WidgetManager.Delete(entry, ConfirmDelete)) { status.Text = "已删除“" + entry.Name + "”。"; RefreshManager(); }
+            }, "删除 " + e.Name, true));
+            Grid.SetColumn(actions, 1); row.Children.Add(actions);
+            var line = new Border { BorderBrush = Color("#EDF0F5"), BorderThickness = new Thickness(0,1,0,0), Child = row };
+            g.Rows.Children.Add(line); g.Entries.Add(new KeyValuePair<FrameworkElement,string>(line, e.Name + " " + e.Detail + " " + e.Status));
+        }
+
+        internal void RefreshManager()
+        {
+            double offset = scroll != null ? scroll.VerticalOffset : 0;
+            BuildManager(); Render();
+            if (scroll != null) { scroll.UpdateLayout(); scroll.ScrollToVerticalOffset(offset); }
+        }
+
+        internal void TestScrollEnd() { scroll.UpdateLayout(); scroll.ScrollToEnd(); scroll.UpdateLayout(); }
         internal void TestSearch(string text) { search.Text=text; }
         internal void TestSelect(int index) { selected=index; search.Text=""; Render(); }
         internal int TestCards { get { return content.Children.Count; } }

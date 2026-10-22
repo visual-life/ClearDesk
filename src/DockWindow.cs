@@ -115,6 +115,8 @@ namespace ClearDesk
                 running.Dispose();
                 if (desktop != null)
                     desktop.Dispose();
+                if (autoHide != null)
+                    autoHide.Dispose();
                 if (liveBackdrop != null)
                 {
                     liveBackdrop.Dispose();
@@ -129,6 +131,8 @@ namespace ClearDesk
                     running.Start();
                     desktop = new DesktopVisibility(this);
                     desktop.Start();
+                    autoHide = new DockAutoHide(this);
+                    autoHide.Start();
                 }
             };
             IsVisibleChanged += delegate
@@ -164,6 +168,12 @@ namespace ClearDesk
             };
             Rebuild();
         }
+
+        DockAutoHide autoHide;
+        internal double ShownTop { get; private set; }
+        internal DockAutoHide AutoHide { get { return autoHide; } }
+        internal DockAutoHide TestAutoHide() { if (autoHide == null) autoHide = new DockAutoHide(this); return autoHide; }
+        internal void RefreshAutoHide() { if (autoHide != null) autoHide.Evaluate(); }
 
         protected override void Material(string material)
         {
@@ -248,7 +258,8 @@ namespace ClearDesk
                 Height = animate ? Math.Max(previousHeight, targetHeight) : targetHeight;
                 State.Height = targetHeight;
                 Left = wa.Left + (wa.Width - Width) / 2;
-                Top = wa.Bottom - Height - Program.S.DockOffset;
+                ShownTop = wa.Bottom - Height - Program.S.DockOffset;
+                if (autoHide == null || !autoHide.Hidden) Top = ShownTop;
                 AddIcon(null);
                 foreach (var entry in entries)
                     AddIcon(entry);

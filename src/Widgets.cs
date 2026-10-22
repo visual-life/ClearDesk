@@ -311,6 +311,30 @@ namespace ClearDesk
             e.BeginAnimation(OpacityProperty, new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms)) { EasingFunction = new QuadraticEase() });
         }
 
+        // 定位: bring the widget briefly above other windows and pulse its border.
+        internal void Flash()
+        {
+            if (!IsVisible) Show();
+            var h = new WindowInteropHelper(this).Handle;
+            if (h != IntPtr.Zero) Native.SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x13);
+            var original = Frame.BorderBrush; var thickness = Frame.BorderThickness;
+            var pulse = new SolidColorBrush(Color.FromArgb(0, 22, 119, 255));
+            Frame.BorderBrush = pulse; Frame.BorderThickness = new Thickness(3);
+            var a = new ColorAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(1800) };
+            for (int i = 0; i < 3; i++)
+            {
+                a.KeyFrames.Add(new LinearColorKeyFrame(Color.FromArgb(255, 64, 150, 255), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(i * 600 + 200))));
+                a.KeyFrames.Add(new LinearColorKeyFrame(Color.FromArgb(40, 64, 150, 255), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(i * 600 + 600))));
+            }
+            a.Completed += delegate
+            {
+                Frame.BorderBrush = original; Frame.BorderThickness = thickness;
+                if (h != IntPtr.Zero && !WasClosed) { Native.SetWindowPos(h, new IntPtr(-2), 0, 0, 0, 0, 0x13); if (!Topmost) Native.SetWindowPos(h, new IntPtr(1), 0, 0, 0, 0, 0x13); }
+            };
+            pulse.BeginAnimation(SolidColorBrush.ColorProperty, a);
+            Toast("\uE81D", "在这里");
+        }
+
         // Brief pill-shaped notice centred near the bottom of the widget.
         internal void Toast(string glyph, string text)
         {

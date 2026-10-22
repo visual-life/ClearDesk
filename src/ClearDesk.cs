@@ -34,6 +34,7 @@ namespace ClearDesk
         public int ConfigVersion = 1;
         public bool GpuRendering = false;
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
+        public bool DockAutoHide = false;
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
@@ -59,6 +60,8 @@ namespace ClearDesk
         static Forms.NotifyIcon tray;
         static Window settings;
         static List<GlassWindow> windows = new List<GlassWindow>();
+        internal static void RefreshDockAutoHide() { foreach (var d in windows.OfType<DockWindow>()) d.RefreshAutoHide(); }
+        internal static IEnumerable<GlassWindow> OpenWindows { get { return windows.ToArray(); } }
         static DispatcherTimer refresh;
         public static string Config
         {
@@ -489,7 +492,7 @@ namespace ClearDesk
                 AddWindow(new WeatherWindow());
             if (S.Music)
                 AddWindow(new MusicWindow());
-            foreach (var n in S.Notes.ToArray())
+            foreach (var n in S.Notes.Where(n => n.Enabled).ToArray())
                 AddWindow(new NoteWindow(n));
         }
 
@@ -785,6 +788,7 @@ namespace ClearDesk
                 results.Add("PASS: Chinese/path config round-trip");
                 MusicTests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V2Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
+                V203Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 var d = new DateTime(2026, 10, 19);
                 string lunar = CalendarWindow.Lunar(d);
                 if (string.IsNullOrEmpty(lunar))
