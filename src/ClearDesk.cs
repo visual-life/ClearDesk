@@ -34,7 +34,7 @@ namespace ClearDesk
         public int ConfigVersion = 1;
         public bool GpuRendering = false;
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
-        public bool DockAutoHide = false;
+        public bool DockAutoHide = false, QuickControls = false;
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
@@ -492,6 +492,8 @@ namespace ClearDesk
                 AddWindow(new WeatherWindow());
             if (S.Music)
                 AddWindow(new MusicWindow());
+            if (S.QuickControls)
+                AddWindow(new QuickControlWindow());
             foreach (var n in S.Notes.Where(n => n.Enabled).ToArray())
                 AddWindow(new NoteWindow(n));
         }
@@ -545,6 +547,7 @@ namespace ClearDesk
                 case "weather": S.Weather = true; match = w => w is WeatherWindow; create = () => new WeatherWindow(); break;
                 case "music": S.Music = true; match = w => w is MusicWindow; create = () => new MusicWindow(); break;
                 case "calendar": S.Calendar = true; match = w => w is CalendarWindow && w.ExportName == "calendar"; create = () => new CalendarWindow(false); break;
+                case "quick": S.QuickControls = true; match = w => w is QuickControlWindow; create = () => new QuickControlWindow(); break;
                 case "almanac": S.Almanac = true; match = w => w is CalendarWindow && w.ExportName == "almanac"; create = () => new CalendarWindow(true); break;
                 default: S.Performance = true; match = w => w is PerformanceWindow; create = () => new PerformanceWindow(); break;
             }
@@ -789,6 +792,7 @@ namespace ClearDesk
                 MusicTests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V2Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V203Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
+                V204Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 var d = new DateTime(2026, 10, 19);
                 string lunar = CalendarWindow.Lunar(d);
                 if (string.IsNullOrEmpty(lunar))

@@ -26,6 +26,7 @@ static const Kind kKinds[] = {
     { L"calendar", L"\u65e5\u5386" },
     { L"almanac", L"\u9ec4\u5386 / \u519c\u5386" },
     { L"performance", L"\u6027\u80fd" },
+    { L"quick", L"\u5feb\u6377\u63a7\u5236" },
 };
 static const int kCount = sizeof(kKinds) / sizeof(kKinds[0]);
 

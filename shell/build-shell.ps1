@@ -2,7 +2,7 @@
 # and ClearDeskSign.exe. End users sign the package on their own PC with a per-machine certificate
 # (Settings > 一键启用 / enable-menu.ps1); no certificate or private key ships in the zip.
 # Needs: Visual Studio C++ tools (vcvars64.bat) and Windows SDK 10.0.22000+ (makeappx) on the build PC only.
-param([string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist'), [string]$Version = '2.0.3.0')
+param([string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist'), [string]$Version = '2.0.4.0')
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot; $repo = Split-Path -Parent $here
 $work = Join-Path $repo 'artifacts\shell-build'; if (Test-Path $work) { Remove-Item $work -Recurse -Force }; New-Item -ItemType Directory $work | Out-Null

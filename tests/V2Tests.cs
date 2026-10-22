@@ -42,7 +42,7 @@ namespace ClearDesk
 
             check(WidgetCatalog.Requested(new[] { "--new-widget", "note" }) == "note" && WidgetCatalog.Requested(new[] { "--startup", "--new-widget", "CLOCK" }) == "clock", "new-widget argument is parsed case-insensitively");
             check(WidgetCatalog.Requested(new[] { "--new-widget", "..\\evil" }) == null && WidgetCatalog.Requested(new[] { "--new-widget" }) == null && WidgetCatalog.Requested(null) == null, "unknown or missing widget kinds are rejected");
-            check(WidgetCatalog.Kinds.Length == 8 && WidgetCatalog.Kinds[0].Key == "note" && WidgetCatalog.Kinds.All(k => WidgetCatalog.IsKnown(k.Key)), "widget catalog lists 8 kinds with 便签 first");
+            check(WidgetCatalog.Kinds.Length == 9 && WidgetCatalog.Kinds[0].Key == "note" && WidgetCatalog.Kinds.All(k => WidgetCatalog.IsKnown(k.Key)), "widget catalog lists 9 kinds (incl. 快捷控制) with 便签 first");
             check(DesktopMenu.Command(@"C:\A B\ClearDesk.exe", "note") == "\"C:\\A B\\ClearDesk.exe\" --new-widget note", "desktop menu command quotes the exe path");
 
             string root = @"Software\ClearDeskSelfTest\DesktopBackground\Shell\ClearDesk";
@@ -53,7 +53,7 @@ namespace ClearDesk
                 {
                     var subs = Registry.CurrentUser.OpenSubKey(root + @"\shell").GetSubKeyNames();
                     using (var cmd = Registry.CurrentUser.OpenSubKey(root + @"\shell\01note\command"))
-                        check((string)k.GetValue("MUIVerb") == DesktopMenu.Title && k.GetValue("SubCommands") != null && ((string)k.GetValue("Icon")).Contains("ClearDesk.exe") && subs.Length == 8 && ((string)cmd.GetValue("")).EndsWith("--new-widget note"), "desktop menu registers cascading submenu with icon and 8 commands");
+                        check((string)k.GetValue("MUIVerb") == DesktopMenu.Title && k.GetValue("SubCommands") != null && ((string)k.GetValue("Icon")).Contains("ClearDesk.exe") && subs.Length == WidgetCatalog.Kinds.Length && ((string)cmd.GetValue("")).EndsWith("--new-widget note"), "desktop menu registers cascading submenu with icon and one command per widget type");
                 }
                 DesktopMenu.Register(@"C:\y\ClearDesk.exe", root);
                 using (var cmd = Registry.CurrentUser.OpenSubKey(root + @"\shell\01note\command"))

@@ -416,6 +416,9 @@ namespace ClearDesk
                 case "music":
                     Program.S.Music = false;
                     break;
+                case "quick":
+                    Program.S.QuickControls = false;
+                    break;
             }
 
             Program.Save();

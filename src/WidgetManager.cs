@@ -24,7 +24,7 @@ namespace ClearDesk
 
     internal static class WidgetManager
     {
-        internal static readonly string[] Singletons = { "clock", "weather", "music", "calendar", "almanac", "performance" };
+        internal static readonly string[] Singletons = { "clock", "weather", "music", "calendar", "almanac", "performance", "quick" };
 
         internal static string KindName(string kind)
         {
@@ -49,6 +49,7 @@ namespace ClearDesk
                 case "calendar": return s.Calendar;
                 case "almanac": return s.Almanac;
                 case "performance": return s.Performance;
+                case "quick": return s.QuickControls;
             }
             return false;
         }
@@ -64,6 +65,7 @@ namespace ClearDesk
                 case "calendar": s.Calendar = on; break;
                 case "almanac": s.Almanac = on; break;
                 case "performance": s.Performance = on; break;
+                case "quick": s.QuickControls = on; break;
             }
         }
 

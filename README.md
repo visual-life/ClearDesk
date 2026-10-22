@@ -2,7 +2,7 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.0.3**，维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.0.4**，维护者 [visual-life](https://github.com/visual-life)。
 
 <img src="docs/images/overview.gif" width="900" alt="ClearDesk 2.0.2 桌面总览：收纳格、音乐、天气、时钟组件与 Dock">
 
@@ -23,6 +23,7 @@
 
 | 版本 | 日期 | 主要变化 |
 | --- | --- | --- |
+| **2.0.4** | 2026-10-22 | 新增“快捷控制”组件：音量滑块与静音（跟随系统实时更新，可切换输出设备）、WLAN 与蓝牙开关及状态、Windows 设置快捷入口。 |
 | **2.0.3** | 2026-10-22 | 设置新增“组件管理”：一处查看所有组件、便签和收纳格，显示／关闭、定位、删除、重命名收纳格；Dock 点击最前面的应用会最小化（与任务栏一致）；Dock 可选“窗口遮挡时自动隐藏”。 |
 | **2.0.2** | 2026-10-22 | 设置里“一键启用”桌面右键一级菜单：本机生成专用证书（私钥不可导出），运行时签名，一次 UAC，发布包不含证书；移动文件夹后自动重新注册；启动台右键菜单只保留材质设置／添加到启动台／打开设置；修复启动台“磨砂”打开时先透明再闪一下。 |
 | **2.0.1** | 2026-10-22 | Windows 11 桌面右键第一层直接显示“ClearDesk 新建组件”（稀疏包 + IExplorerCommand）；启动台可选“玻璃 · 实时清透／磨砂 · 实时模糊”；所有右键菜单统一为 Windows 11 白色样式（圆角、阴影、线性图标）；Dock 图标右键新增“发送至桌面收纳”。 |
@@ -35,7 +36,7 @@
 
 ## 下载
 
-推荐使用 **2.0.3**：完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8；一级右键菜单需要 Windows 11。
+推荐使用 **2.0.4**：完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8；一级右键菜单需要 Windows 11。
 
 发行包见 [Releases](https://github.com/visual-life/ClearDesk/releases)。历史版本：[1.9.1](https://github.com/visual-life/ClearDesk/releases/tag/v1.9.1) · [1.8.2](https://github.com/visual-life/ClearDesk/releases/tag/v1.8.2)。
 

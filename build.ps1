@@ -33,7 +33,7 @@ if (-not $WindowsMetadata) {
 }
 if (-not $WindowsMetadata) { throw 'Install Windows 10/11 SDK (17763 or later), or pass -WindowsMetadata with the path to Windows.winmd.' }
 $refs += '/reference:' + $WindowsMetadata
-foreach ($name in @('System.Runtime.dll','System.Runtime.WindowsRuntime.dll')) {
+foreach ($name in @('System.Runtime.dll','System.Runtime.WindowsRuntime.dll','System.Runtime.InteropServices.WindowsRuntime.dll')) {
     $ref = Join-Path $framework $name
     if (-not (Test-Path -LiteralPath $ref)) { $ref = Join-Path (Join-Path $framework 'Facades') $name }
     $refs += '/reference:' + $ref

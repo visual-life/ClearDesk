@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.3";
+        internal const string Version = "2.0.4";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -193,6 +193,7 @@ namespace ClearDesk
             Toggle(g,"日历","查看日期。",state.Calendar,v=>state.Calendar=v);
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
             Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
+            Toggle(g,"快捷控制","音量、WLAN、蓝牙开关与 Windows 设置快捷入口。",state.QuickControls,v=>state.QuickControls=v);
             Toggle(g,"磁吸对齐","拖动组件时吸附屏幕边缘、其他组件的边缘与中线及等距间隔，并显示参考线；按住 Alt 临时关闭。",state.Magnet,v=>state.Magnet=v);
             Toggle(g,"桌面右键新建组件","在桌面右键菜单加入“ClearDesk 新建组件”。未安装 Windows 11 一级菜单时位于“显示更多选项”里。",state.DesktopMenu,v=>{ state.DesktopMenu=v; DesktopMenu.Sync(); });
             if (ModernMenu.Available)

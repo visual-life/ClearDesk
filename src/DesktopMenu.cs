@@ -22,6 +22,7 @@ namespace ClearDesk
             new KeyValuePair<string, string>("calendar", "日历"),
             new KeyValuePair<string, string>("almanac", "黄历 / 农历"),
             new KeyValuePair<string, string>("performance", "性能"),
+            new KeyValuePair<string, string>("quick", "快捷控制"),
         };
 
         public static bool IsKnown(string kind)
