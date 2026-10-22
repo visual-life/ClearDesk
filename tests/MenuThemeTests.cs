@@ -68,7 +68,7 @@ namespace ClearDesk
                 var popup = (Popup)parent.Template.FindName("PART_Popup", parent);
                 var bg = ((SolidColorBrush)panel.Background).Color;
                 var fg = ((SolidColorBrush)frost.Foreground).Color;
-                check(popup.IsOpen && bg.R < 50 && bg.G < 50 && fg.R > 220, "open material submenu has explicit dark surface and readable bright text");
+                check(popup.IsOpen && bg.R > 240 && bg.G > 240 && fg.R < 60, "open material submenu has the light Windows 11 surface and dark readable text");
                 check(frost.IsChecked && !clear.IsChecked && ((UIElement)frost.Template.FindName("Check", frost)).Visibility == Visibility.Visible, "material submenu shows current selection with the custom checkmark");
                 parent.IsSubmenuOpen = false;
                 menu.IsOpen = false;

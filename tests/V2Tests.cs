@@ -74,8 +74,16 @@ namespace ClearDesk
             var old = new JavaScriptSerializer().Deserialize<Settings>("{\"Clock\":true}");
             check(old.Notes != null && old.Magnet, "1.9.x settings without notes load with defaults");
             check(NoteWindow.NeedsConfirm("x") && !NoteWindow.NeedsConfirm("  \n") && !NoteWindow.NeedsConfirm(null), "only non-empty notes ask before deleting");
+            check(new Settings().ModernMenu && new Settings().DesktopMenu, "Windows 11 top-level menu visibility defaults on");
             check(GlassWindow.LockActionText(false) == "锁定位置" && GlassWindow.LockActionText(true) == "解锁位置" && GlassWindow.LockStateText(true) == "位置已锁定" && GlassWindow.LockStateText(false) == "位置未锁定", "lock menu wording reflects state and action");
         }
+
+        static double Lum(Color c)
+        {
+            Func<double, double> f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4); };
+            return 0.2126 * f(c.R) + 0.7152 * f(c.G) + 0.0722 * f(c.B);
+        }
+        static double Contrast(Color a, Color b) { double x = Lum(a), y = Lum(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
 
         static string HeaderText(MenuItem m)
         {
@@ -176,6 +184,61 @@ namespace ClearDesk
             Program.S.Magnet = magnet;
             GuideOverlay.Hide();
             organizer.Left = 20; organizer.Top = 20;
+
+            // Windows 11 menu style + Dock send-to-organizer
+            check(MenuTheme.GlyphFor("新建组件") != null && MenuTheme.GlyphFor("发送至桌面收纳") != null && MenuTheme.GlyphFor("随便") == null, "known commands get Fluent icons");
+            MenuTheme.Decorate(organizer.ContextMenu);
+            check(organizer.ContextMenu.Items.OfType<MenuItem>().Where(m => m.Header is string).All(m => m.Icon != null || MenuTheme.GlyphFor((string)m.Header) == null) && organizer.TestLockItem.Icon != null, "widget menu items carry line icons");
+            var lockBrush = (SolidColorBrush)((TextBlock)((StackPanel)organizer.TestLockItem.Header).Children[1]).Foreground;
+            check(Contrast(lockBrush.Color, Color.FromRgb(249, 249, 249)) >= 4.5, "lock-state line keeps >=4.5:1 contrast on the light menu");
+            organizer.SetLocked(true);
+            lockBrush = (SolidColorBrush)((TextBlock)((StackPanel)organizer.TestLockItem.Header).Children[1]).Foreground;
+            check(Contrast(lockBrush.Color, Color.FromRgb(249, 249, 249)) >= 4.5, "amber locked-state line keeps >=4.5:1 contrast on the light menu");
+            organizer.SetLocked(false);
+            string temp = Path.Combine(Path.GetTempPath(), "cd-send-" + Guid.NewGuid().ToString("N") + ".txt");
+            File.WriteAllText(temp, "x");
+            try
+            {
+                var send = DockWindow.SendMenu(temp);
+                send.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent, send));
+                check(send.Items.OfType<MenuItem>().Count() == Program.S.Boxes.Count + 1 && Equals(send.Items.OfType<MenuItem>().Last().Header, "新建收纳格并添加"), "Dock 发送至桌面收纳 lists every organizer plus a new one");
+                var first = Program.S.Boxes[0];
+                send.Items.OfType<MenuItem>().First().RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                check(first.Items.Contains(temp), "Dock send adds a reference to the chosen organizer");
+                first.Items.Remove(temp);
+                Program.Save();
+            }
+            finally { File.Delete(temp); }
+
+            // launchpad materials
+            var state = Program.Widget("launchpad", 0, 0, 880, 520);
+            string oldMaterial = state.Material;
+            state.Material = "liquid";
+            var lp = new LaunchpadWindow();
+            lp.Show();
+            await Task.Delay(500);
+            var materials = (MenuItem)lp.ContextMenu.Items[0];
+            check(Equals(materials.Header, "材质设置") && Equals(((MenuItem)materials.Items[0]).Header, "玻璃 · 实时清透") && Equals(((MenuItem)materials.Items[1]).Header, "磨砂 · 实时模糊"), "launchpad background menu offers both materials");
+            check(lp.CurrentMaterial == "liquid" && !lp.TestLiveFrost, "launchpad glass has no backdrop window");
+            Render((FrameworkElement)lp.Content, "launchpad-glass");
+            lp.TestMaterial2("frosted");
+            await Task.Delay(300);
+            check(lp.CurrentMaterial == "frosted" && state.Material == "frosted" && state.MaterialSelected, "launchpad material persists in settings");
+            check(lp.TestLiveFrost && lp.TestBackdropHandle != IntPtr.Zero && Native.IsWindowVisible(lp.TestBackdropHandle), "launchpad frosted uses a live compositor blur placed behind it");
+            materials.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent));
+            check(((MenuItem)materials.Items[1]).IsChecked && !((MenuItem)materials.Items[0]).IsChecked, "launchpad material submenu shows a checkmark on the current material");
+            Render((FrameworkElement)lp.Content, "launchpad-frosted");
+            lp.Close();
+            await Task.Delay(200);
+            var lp2 = new LaunchpadWindow();
+            lp2.Show();
+            await Task.Delay(400);
+            check(lp2.CurrentMaterial == "frosted" && lp2.TestLiveFrost, "reopened launchpad keeps frosted material");
+            IntPtr h = lp2.TestBackdropHandle;
+            lp2.Close();
+            await Task.Delay(200);
+            check(h == IntPtr.Zero || !Native.IsWindowVisible(h), "closing launchpad releases its backdrop window");
+            state.Material = oldMaterial;
         }
     }
 }

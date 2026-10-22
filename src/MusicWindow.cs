@@ -75,16 +75,11 @@ namespace ClearDesk
             sourceMenu.PlacementTarget = source;
             sourceMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
             sourceMenu.MinWidth = 192;
-            sourceMenu.Background = new SolidColorBrush(Color.FromArgb(248, 31, 33, 40));
-            sourceMenu.BorderBrush = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255));
-            sourceMenu.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(
-                "<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='ContextMenu'><Border Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='1' CornerRadius='14' Padding='6'><StackPanel IsItemsHost='True'/></Border></ControlTemplate>");
+            // Uses the shared Windows 11 menu style (MenuTheme).
             foreach (string key in sources)
             {
                 string value = key;
-                var item = new MenuItem { Header = key == "auto" ? "自动选择播放器" : MusicSources.Name(key), Tag = key, IsCheckable = true, Height = 34, Padding = new Thickness(10, 5, 10, 5) };
-                item.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(
-                    "<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='MenuItem'><Border x:Name='Row' CornerRadius='8' Padding='{TemplateBinding Padding}' Background='Transparent'><Grid><Grid.ColumnDefinitions><ColumnDefinition Width='22'/><ColumnDefinition Width='*'/></Grid.ColumnDefinitions><TextBlock x:Name='Mark' Text='✓' Opacity='0' VerticalAlignment='Center' Foreground='White'/><ContentPresenter Grid.Column='1' ContentSource='Header' VerticalAlignment='Center'/></Grid></Border><ControlTemplate.Triggers><Trigger Property='IsHighlighted' Value='True'><Setter TargetName='Row' Property='Background' Value='#28FFFFFF'/></Trigger><Trigger Property='IsChecked' Value='True'><Setter TargetName='Mark' Property='Opacity' Value='1'/><Setter TargetName='Row' Property='Background' Value='#18FFFFFF'/></Trigger></ControlTemplate.Triggers></ControlTemplate>");
+                var item = new MenuItem { Header = key == "auto" ? "自动选择播放器" : MusicSources.Name(key), Tag = key, IsCheckable = true };
                 item.Click += delegate { SelectSource(value); };
                 sourceMenu.Items.Add(item);
             }

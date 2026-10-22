@@ -433,9 +433,43 @@ namespace ClearDesk
                 }));
             }
 
+            string sendPath = entry.PinPath ?? (entry.Identity == null ? null : entry.Identity.Exe);
+            if (!string.IsNullOrEmpty(sendPath) && !sendPath.StartsWith("shell:", StringComparison.OrdinalIgnoreCase))
+                menu.Items.Add(SendMenu(sendPath));
+
             menu.Items.Add(new Separator());
             menu.Items.Add(close);
             return menu;
+        }
+
+        // 1.8.0 only offered this on Launchpad items; the Dock menu never had it.
+        internal static MenuItem SendMenu(string path)
+        {
+            var send = new MenuItem { Header = "发送至桌面收纳", Tag = "send" };
+            send.SubmenuOpened += delegate (object s, RoutedEventArgs e)
+            {
+                if (e.OriginalSource != send) return;
+                send.Items.Clear();
+                foreach (var box in Program.S.Boxes)
+                {
+                    var target = box;
+                    var item = new MenuItem { Header = box.Title + (box.Enabled ? "" : "（已关闭）") };
+                    item.Click += delegate { Send(path, target); };
+                    send.Items.Add(item);
+                }
+                send.Items.Add(new Separator());
+                var create = new MenuItem { Header = "新建收纳格并添加" };
+                create.Click += delegate { Send(path, null); };
+                send.Items.Add(create);
+            };
+            send.Items.Add(new MenuItem { Header = "…" }); // placeholder so the chevron shows
+            return send;
+        }
+
+        static void Send(string path, BoxData box)
+        {
+            try { Program.SendToOrganizer(path, box); }
+            catch (Exception error) { MessageBox.Show(error.Message, "未能添加到收纳"); }
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]

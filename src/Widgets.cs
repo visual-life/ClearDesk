@@ -292,9 +292,9 @@ namespace ClearDesk
             bool locked = State.Locked;
             var panel = new StackPanel();
             panel.Children.Add(new TextBlock { Text = LockActionText(locked) });
-            panel.Children.Add(new TextBlock { Text = "当前：" + LockStateText(locked), FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), Foreground = new SolidColorBrush(locked ? Color.FromRgb(255, 200, 120) : Color.FromRgb(150, 160, 178)) });
+            panel.Children.Add(new TextBlock { Text = "当前：" + LockStateText(locked), FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), Foreground = new SolidColorBrush(locked ? MenuTheme.LockedAccent : MenuTheme.Secondary) });
             lockItem.Header = panel;
-            lockItem.Icon = new TextBlock { Text = locked ? "\uE72E" : "\uE785", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Foreground = new SolidColorBrush(locked ? Color.FromRgb(255, 200, 120) : Color.FromRgb(200, 208, 222)), VerticalAlignment = VerticalAlignment.Center };
+            lockItem.Icon = MenuTheme.Glyph(locked ? "\uE72E" : "\uE785", locked ? MenuTheme.LockedAccent : MenuTheme.Text);
         }
 
         internal void SetLocked(bool locked)

@@ -60,6 +60,7 @@ namespace ClearDesk
                 if (Program.Preview) return;
                 if (Program.S.DesktopMenu) Register(Path.Combine(Program.Base, "ClearDesk.exe"));
                 else Unregister();
+                ModernMenu.SetVisible(Program.S.DesktopMenu && Program.S.ModernMenu);
             }
             catch (Exception e) { Program.Log(e); }
         }
@@ -97,6 +98,53 @@ namespace ClearDesk
         {
             using (var k = Registry.CurrentUser.OpenSubKey(root))
                 return k != null;
+        }
+    }
+
+    // Windows 11 top-level entry: sparse package (ClearDeskShell.msix, external location =
+    // the ClearDesk folder) + IExplorerCommand COM DLL. Installing needs the signing
+    // certificate in LocalMachine\TrustedPeople once (one UAC prompt); see install-menu.ps1.
+    internal static class ModernMenu
+    {
+        public const string PackageName = "ClearDesk.ShellMenu";
+
+        public static void SetVisible(bool visible)
+        {
+            using (var k = Registry.CurrentUser.CreateSubKey(@"Software\ClearDesk"))
+                k.SetValue("ModernMenu", visible ? 1 : 0, RegistryValueKind.DWord);
+        }
+
+        public static bool Available
+        {
+            get { return Environment.OSVersion.Version.Build >= 22000 && File.Exists(Path.Combine(Program.Base, "ClearDeskShell.msix")) && File.Exists(Path.Combine(Program.Base, "install-menu.ps1")); }
+        }
+
+        // Returns the install location of the registered package, or null.
+        public static string InstalledLocation()
+        {
+            try
+            {
+                var pm = new Windows.Management.Deployment.PackageManager();
+                foreach (var p in pm.FindPackagesForUser(string.Empty))
+                {
+                    try
+                    {
+                        if (p.Id.Name == PackageName)
+                        {
+                            try { return p.EffectiveExternalLocation != null ? p.EffectiveExternalLocation.Path : ""; } catch { return ""; }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception e) { Program.Log(e); }
+            return null;
+        }
+
+        public static void RunScript(bool install)
+        {
+            string script = Path.Combine(Program.Base, install ? "install-menu.ps1" : "uninstall-menu.ps1");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"") { UseShellExecute = true, WorkingDirectory = Program.Base });
         }
     }
 

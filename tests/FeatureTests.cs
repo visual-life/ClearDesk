@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -35,7 +35,7 @@ namespace ClearDesk
             {
                 menu.PlacementTarget=owner; menu.IsOpen=true; await Task.Delay(60); item.IsSubmenuOpen=true; await Task.Delay(100); item.ApplyTemplate();
                 var panel=(Border)item.Template.FindName("SubmenuSurface",item);
-                check(panel!=null && ((SolidColorBrush)panel.Background).Color.R<50 && item.Items.OfType<MenuItem>().All(m=>m.IsEnabled),"new "+name+" submenu uses readable dark styling with actionable choices");
+                check(panel!=null && ((SolidColorBrush)panel.Background).Color.R>240 && item.Items.OfType<MenuItem>().All(m=>m.IsEnabled),"new "+name+" submenu uses the light Windows 11 styling with actionable choices");
                 var bitmap=new RenderTargetBitmap((int)Math.Ceiling(panel.ActualWidth),(int)Math.Ceiling(panel.ActualHeight),96,96,PixelFormats.Pbgra32); bitmap.Render(panel);
                 var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using(var file=File.Create(Path.Combine(Program.Base,name+".png"))) encoder.Save(file);
             }

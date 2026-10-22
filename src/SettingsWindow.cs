@@ -12,7 +12,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.0";
+        internal const string Version = "2.0.1";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -168,6 +168,8 @@ namespace ClearDesk
             Toggle(g,"显示 Dock 栏","固定常用应用，查看正在运行的程序。",state.Dock,v => state.Dock=v);
             Range(g,"图标大小","调整 Dock 的基础图标尺寸。",32,72,state.DockSize," px",v => state.DockSize=v);
             Row(g,"桌面启动台","快速查找并打开桌面项目。",ActionButton("打开启动台",Program.Launchpad));
+            var launchpad=Program.Widget("launchpad",0,0,880,520);
+            Choice(g,"启动台材质","磨砂会实时模糊启动台后方的窗口和桌面；也可在启动台空白处右键切换。",new[]{"玻璃 · 实时清透","磨砂 · 实时模糊"},launchpad.Material=="frosted"?1:0,i => { launchpad.Material=i==1?"frosted":"liquid"; launchpad.MaterialSelected=true; Program.Save(); });
             Row(g,"使用方式","拖动调整顺序；右键固定应用。点击运行中的应用切回已有窗口。");
             g=AddGroup(3,"音乐控制");
             Toggle(g,"显示音乐组件","显示歌曲信息，控制播放、上一首和下一首。",state.Music,v => state.Music=v);
@@ -187,7 +189,13 @@ namespace ClearDesk
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
             Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
             Toggle(g,"磁吸对齐","拖动组件时吸附屏幕边缘、其他组件的边缘与中线及等距间隔，并显示参考线；按住 Alt 临时关闭。",state.Magnet,v=>state.Magnet=v);
-            Toggle(g,"桌面右键新建组件","在桌面右键菜单加入“ClearDesk 新建组件”。Windows 11 中位于“显示更多选项”里。",state.DesktopMenu,v=>{ state.DesktopMenu=v; DesktopMenu.Sync(); });
+            Toggle(g,"桌面右键新建组件","在桌面右键菜单加入“ClearDesk 新建组件”。未安装 Windows 11 一级菜单时位于“显示更多选项”里。",state.DesktopMenu,v=>{ state.DesktopMenu=v; DesktopMenu.Sync(); });
+            if (ModernMenu.Available)
+            {
+                Toggle(g,"Windows 11 一级菜单显示","已安装一级菜单时，在右键第一层显示“ClearDesk 新建组件”。",state.ModernMenu,v=>{ state.ModernMenu=v; DesktopMenu.Sync(); });
+                Row(g,"Windows 11 一级菜单","安装后无需点“显示更多选项”。首次安装会请求一次管理员权限以信任随附的自签名证书；移动 ClearDesk 文件夹后需重新安装。",ActionButton("安装 / 修复",delegate { ModernMenu.RunScript(true); }));
+                Row(g,"卸载一级菜单","移除 Windows 11 一级菜单（经典菜单仍由上方开关控制）。",ActionButton("卸载",delegate { ModernMenu.RunScript(false); }));
+            }
             Row(g,"便签","可新建多张，自动保存；右键可换颜色或删除。",ActionButton("新建便签",delegate { Program.NewNote(); }));
             g=AddGroup(4,"天气与隐私");
             Toggle(g,"自动天气联网","IPwho.is 获取近似城市，Open-Meteo 接收城市坐标获取天气。",state.WeatherOnline,v=>state.WeatherOnline=v);

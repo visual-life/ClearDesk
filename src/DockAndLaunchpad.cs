@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -56,10 +56,21 @@ namespace ClearDesk
         bool dismissing;
         OutsideClickWatcher outside;
         DispatcherTimer deactivateTimer;
+        DockBackdrop liveBackdrop;
         internal static DateTime AnimationUntil;
         public LaunchpadWindow() : base(CreateState(), "启动台")
         {
             AnimationUntil = DateTime.UtcNow.AddMilliseconds(350);
+            // Launchpad overlays other windows: “磨砂” must blur what is behind it live
+            // (same compositor host-backdrop as the Dock), not the wallpaper image.
+            if (Surface != null) Root.Children.Remove(Surface);
+            Surface = new GlassPane(State.Material, false);
+            Root.Children.Insert(0, Surface);
+            Frame.BorderThickness = new Thickness(1);
+            Loaded += delegate { UpdateBackdrop(); };
+            LocationChanged += delegate { SyncBackdrop(); };
+            SizeChanged += delegate { SyncBackdrop(); };
+            IsVisibleChanged += delegate { SyncBackdrop(); };
             Root.Opacity = 0;
             Root.RenderTransform = new TranslateTransform(0, 10);
             Topmost = true;
@@ -184,6 +195,7 @@ namespace ClearDesk
             };
             Closed += delegate
             {
+                if (liveBackdrop != null) { liveBackdrop.Dispose(); liveBackdrop = null; }
                 deactivateTimer.Stop();
                 if (outside != null)
                 {
@@ -220,14 +232,48 @@ namespace ClearDesk
 
         protected override void Material(string material)
         {
-            base.Material("liquid");
+            base.Material(material == "frosted" ? "frosted" : "liquid");
+            UpdateBackdrop();
+        }
+
+        internal void TestMaterial2(string material) { Material(material); }
+        internal string CurrentMaterial { get { return State.Material; } }
+        internal bool TestLiveFrost { get { return liveBackdrop != null && liveBackdrop.Enabled; } }
+        internal IntPtr TestBackdropHandle { get { return liveBackdrop == null ? IntPtr.Zero : liveBackdrop.Handle; } }
+
+        void UpdateBackdrop()
+        {
+            if (!IsLoaded || WasClosed) return;
+            if (State.Material == "frosted" && liveBackdrop == null)
+                liveBackdrop = new DockBackdrop();
+            if (State.Material != "frosted" && liveBackdrop != null)
+            {
+                liveBackdrop.Dispose();
+                liveBackdrop = null;
+            }
+            SyncBackdrop();
+        }
+
+        void SyncBackdrop()
+        {
+            if (liveBackdrop == null || WasClosed) return;
+            var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (!IsVisible || Root.ActualWidth < 1 || Root.ActualHeight < 1 || PresentationSource.FromVisual(Root) == null)
+            {
+                liveBackdrop.Sync(handle, Rect.Empty, 1, false);
+                return;
+            }
+            var topLeft = Root.PointToScreen(new Point());
+            var bottomRight = Root.PointToScreen(new Point(Root.ActualWidth, Root.ActualHeight));
+            liveBackdrop.Sync(handle, new Rect(topLeft, bottomRight), (bottomRight.X - topLeft.X) / Root.ActualWidth * 22.0 / 25.0, true);
         }
 
         protected override ContextMenu Menu()
         {
             var menu = base.Menu();
-            menu.Items.RemoveAt(0);
-            menu.Items.Insert(0, new MenuItem { Header = "启动台 · 实时透明", IsEnabled = false });
+            var materials = (MenuItem)menu.Items[0];
+            ((MenuItem)materials.Items[0]).Header = "玻璃 · 实时清透";
+            ((MenuItem)materials.Items[1]).Header = "磨砂 · 实时模糊";
             return menu;
         }
 
@@ -280,7 +326,7 @@ namespace ClearDesk
             state.Height = height;
             state.Collapsed = false;
             state.Locked = true;
-            state.Material = "liquid";
+            if (state.Material != "frosted") state.Material = "liquid";
             return state;
         }
 

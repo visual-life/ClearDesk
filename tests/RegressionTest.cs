@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -211,7 +211,7 @@ namespace ClearDesk
                 Program.Launchpad();
                 await Task.Delay(300);
                 materialPad = Program.App.Windows.OfType<LaunchpadWindow>().First();
-                Check(!materialPad.TestSurface.IsFrosted && !materialPad.TestSurface.FrostEnabled, "launchpad always uses real transparency instead of wallpaper, including old frosted settings");
+                Check(materialPad.TestSurface.IsFrosted && !materialPad.TestSurface.FrostEnabled && materialPad.TestLiveFrost, "launchpad frosted persists and blurs live content behind it instead of the wallpaper image");
                 materialPad.TestMaterial("liquid");
                 materialPad.Close();
                 organizer.TestMaterial("liquid");
