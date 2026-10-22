@@ -185,6 +185,10 @@ namespace ClearDesk
             GuideOverlay.Hide();
             organizer.Left = 20; organizer.Top = 20;
 
+            // Windows 11 top-level menu: status + moved-folder detection
+            check(ModernMenu.Status(null) == ModernMenu.State.Off && ModernMenu.Status(Program.Base + "\\") == ModernMenu.State.On && ModernMenu.Status(@"D:\elsewhere\ClearDesk") == ModernMenu.State.Moved && ModernMenu.Status("") == ModernMenu.State.Moved, "top-level menu status distinguishes off / on / moved folder");
+            check(ModernMenu.StatusText(ModernMenu.State.Off).Contains("显示更多选项") && ModernMenu.StatusText(ModernMenu.State.On).StartsWith("已启用"), "top-level menu status text");
+
             // Windows 11 menu style + Dock send-to-organizer
             check(MenuTheme.GlyphFor("新建组件") != null && MenuTheme.GlyphFor("发送至桌面收纳") != null && MenuTheme.GlyphFor("随便") == null, "known commands get Fluent icons");
             MenuTheme.Decorate(organizer.ContextMenu);
@@ -220,6 +224,8 @@ namespace ClearDesk
             var materials = (MenuItem)lp.ContextMenu.Items[0];
             check(Equals(materials.Header, "材质设置") && Equals(((MenuItem)materials.Items[0]).Header, "玻璃 · 实时清透") && Equals(((MenuItem)materials.Items[1]).Header, "磨砂 · 实时模糊"), "launchpad background menu offers both materials");
             check(lp.CurrentMaterial == "liquid" && !lp.TestLiveFrost, "launchpad glass has no backdrop window");
+            var lpHeaders = lp.ContextMenu.Items.OfType<MenuItem>().Select(m => m.Header as string).ToList();
+            check(lpHeaders.SequenceEqual(new[] { "材质设置", "添加到启动台…", "打开设置" }), "launchpad menu keeps only 材质设置 / 添加 / 打开设置 (no widget items): " + string.Join(",", lpHeaders));
             Render((FrameworkElement)lp.Content, "launchpad-glass");
             lp.TestMaterial2("frosted");
             await Task.Delay(300);
@@ -231,9 +237,13 @@ namespace ClearDesk
             lp.Close();
             await Task.Delay(200);
             var lp2 = new LaunchpadWindow();
+            bool preparedHidden = false;
+            lp2.SourceInitialized += delegate { preparedHidden = lp2.TestLiveFrost && lp2.TestBackdropOpacity == 0f; };
             lp2.Show();
+            check(preparedHidden, "frosted backdrop is prepared, fully transparent, before the launchpad is first painted");
             await Task.Delay(400);
             check(lp2.CurrentMaterial == "frosted" && lp2.TestLiveFrost, "reopened launchpad keeps frosted material");
+            check(lp2.TestBackdropOpacity == 1f, "frosted backdrop fades in together with the content");
             IntPtr h = lp2.TestBackdropHandle;
             lp2.Close();
             await Task.Delay(200);

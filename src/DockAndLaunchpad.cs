@@ -67,7 +67,9 @@ namespace ClearDesk
             Surface = new GlassPane(State.Material, false);
             Root.Children.Insert(0, Surface);
             Frame.BorderThickness = new Thickness(1);
-            Loaded += delegate { UpdateBackdrop(); };
+            // Prepare the blur host before the window is first shown, fully transparent; it fades in
+            // together with the content in AnimatePopup instead of popping in after Loaded.
+            SourceInitialized += delegate { UpdateBackdrop(true); };
             LocationChanged += delegate { SyncBackdrop(); };
             SizeChanged += delegate { SyncBackdrop(); };
             IsVisibleChanged += delegate { SyncBackdrop(); };
@@ -239,13 +241,17 @@ namespace ClearDesk
         internal void TestMaterial2(string material) { Material(material); }
         internal string CurrentMaterial { get { return State.Material; } }
         internal bool TestLiveFrost { get { return liveBackdrop != null && liveBackdrop.Enabled; } }
+        internal float TestBackdropOpacity { get { return liveBackdrop == null ? -1f : liveBackdrop.TargetOpacity; } }
         internal IntPtr TestBackdropHandle { get { return liveBackdrop == null ? IntPtr.Zero : liveBackdrop.Handle; } }
 
-        void UpdateBackdrop()
+        void UpdateBackdrop(bool hidden = false)
         {
-            if (!IsLoaded || WasClosed) return;
+            if (WasClosed || new System.Windows.Interop.WindowInteropHelper(this).Handle == IntPtr.Zero) return;
             if (State.Material == "frosted" && liveBackdrop == null)
+            {
                 liveBackdrop = new DockBackdrop();
+                liveBackdrop.Fade(hidden || Root.Opacity < 0.5 ? 0f : 1f, 0);
+            }
             if (State.Material != "frosted" && liveBackdrop != null)
             {
                 liveBackdrop.Dispose();
@@ -270,10 +276,22 @@ namespace ClearDesk
 
         protected override ContextMenu Menu()
         {
+            // Only launchpad-relevant commands: no collapse / lock / restore / close-widget items.
             var menu = base.Menu();
             var materials = (MenuItem)menu.Items[0];
             ((MenuItem)materials.Items[0]).Header = "玻璃 · 实时清透";
             ((MenuItem)materials.Items[1]).Header = "磨砂 · 实时模糊";
+            var settings = menu.Items.OfType<MenuItem>().FirstOrDefault(m => Equals(m.Header, "打开设置"));
+            menu.Items.Clear();
+            menu.Items.Add(materials);
+            var add = new MenuItem { Header = "添加到启动台…", Icon = MenuTheme.Glyph("\uE710") };
+            add.Click += delegate { AddFiles(); };
+            menu.Items.Add(add);
+            if (settings != null)
+            {
+                menu.Items.Add(new Separator());
+                menu.Items.Add(settings);
+            }
             return menu;
         }
 
@@ -344,6 +362,11 @@ namespace ClearDesk
                 EasingMode = EasingMode.EaseOut
             };
             var time = TimeSpan.FromMilliseconds(show ? 160 : 100);
+            if (liveBackdrop != null)
+            {
+                SyncBackdrop();
+                liveBackdrop.Fade(show ? 1f : 0f, (int)time.TotalMilliseconds);
+            }
             Root.BeginAnimation(OpacityProperty, new DoubleAnimation(show ? 1 : 0, time) { EasingFunction = ease });
             move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(show ? 0 : 6, time) { EasingFunction = ease });
         }

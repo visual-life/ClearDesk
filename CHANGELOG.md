@@ -1,5 +1,14 @@
 # 更新记录
 
+## 2.0.2 — 2026-10-22
+
+- 桌面右键一级菜单“一键启用”：设置 → 外观与材质 →“桌面右键一级菜单”显示当前状态（已启用／未启用，使用「显示更多选项」中的菜单），点“一键启用”先说明将要做的事，再：在当前用户下生成仅本机使用的自签名证书（私钥不可导出）；用随附的 ClearDeskSign.exe（调用系统 mssign32 SignerSignEx2 + APPX SIP，不需要 Windows SDK／signtool）为未签名的 ClearDeskShell.msix 签名，签名副本存于 %LOCALAPPDATA%\ClearDesk\shell；通过一次 UAC 把公钥证书导入“本机\受信任人”；以当前 ClearDesk 文件夹为外部位置注册稀疏包并校验。“关闭/卸载”移除程序包、本机证书和受信任证书（一次 UAC）。发布包不再包含任何证书或私钥；install-menu.ps1／uninstall-menu.ps1 由 enable-menu.ps1／disable-menu.ps1 取代。
+- 移动文件夹：启动时若发现程序包注册在别的文件夹，自动以新位置重新注册（证书已受信任，不弹 UAC）；失败时设置中提示，点“一键启用”即可修复。
+- 启动台右键菜单只保留与启动台相关的项：材质设置、添加到启动台…、打开设置；去掉收缩／展开、锁定位置、新建组件、恢复位置、关闭组件。
+- 修复启动台使用“磨砂 · 实时模糊”时打开先透明、闪一下再正常：模糊背景在窗口显示前（SourceInitialized）就创建并设为完全透明，随内容同一 160 ms 动画淡入，关闭时同步淡出，不再在显示后才套用合成效果。
+- 所有右键菜单统一为 Windows 11 白色样式（圆角、阴影、线性图标、勾选、子菜单箭头），托盘菜单同色；Dock 图标右键新增“发送至桌面收纳”（选择收纳格或新建）。
+- 版本号统一为 2.0.2。
+
 ## 2.0.1 — 2026-10-22
 
 - Windows 11 一级桌面右键菜单：新增稀疏包（sparse package）ClearDeskShell.msix，外部位置指向 ClearDesk 文件夹，附带原生 IExplorerCommand 外壳扩展 ClearDeskShell.dll（C++，由 dllhost 代理加载）。安装后桌面右键第一层直接出现“ClearDesk 新建组件”，展开为 8 种组件，点击即执行 `ClearDesk.exe --new-widget <类型>`。安装和卸载分别用 install-menu.ps1、uninstall-menu.ps1，也可在设置 → 外观与材质里操作。首次安装需要一次管理员授权：把随附的自签名证书导入“本机\受信任人”。已实测，仅导入“当前用户\受信任人”会被 Windows 拒绝（0x800B0109）。设置中新增“Windows 11 一级菜单显示”开关，关闭后外壳扩展即时隐藏该项。经典菜单保留，供 Windows 10 使用或作为后备。

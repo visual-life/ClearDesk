@@ -103,7 +103,7 @@ namespace ClearDesk
 
     // Windows 11 top-level entry: sparse package (ClearDeskShell.msix, external location =
     // the ClearDesk folder) + IExplorerCommand COM DLL. Installing needs the signing
-    // certificate in LocalMachine\TrustedPeople once (one UAC prompt); see install-menu.ps1.
+    // certificate in LocalMachine\TrustedPeople once (one UAC prompt); see enable-menu.ps1.
     internal static class ModernMenu
     {
         public const string PackageName = "ClearDesk.ShellMenu";
@@ -116,10 +116,10 @@ namespace ClearDesk
 
         public static bool Available
         {
-            get { return Environment.OSVersion.Version.Build >= 22000 && File.Exists(Path.Combine(Program.Base, "ClearDeskShell.msix")) && File.Exists(Path.Combine(Program.Base, "install-menu.ps1")); }
+            get { return Environment.OSVersion.Version.Build >= 22000 && new[] { "ClearDeskShell.msix", "ClearDeskShell.dll", "ClearDeskSign.exe", "enable-menu.ps1", "disable-menu.ps1" }.All(f => File.Exists(Path.Combine(Program.Base, f))); }
         }
 
-        // Returns the install location of the registered package, or null.
+        // Returns the external location of the registered package, "" if registered without one, or null.
         public static string InstalledLocation()
         {
             try
@@ -141,10 +141,75 @@ namespace ClearDesk
             return null;
         }
 
-        public static void RunScript(bool install)
+        public enum State { Off, On, Moved }
+
+        public static State Status(string location)
         {
-            string script = Path.Combine(Program.Base, install ? "install-menu.ps1" : "uninstall-menu.ps1");
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"") { UseShellExecute = true, WorkingDirectory = Program.Base });
+            if (location == null) return State.Off;
+            return SamePath(location, Program.Base) ? State.On : State.Moved;
+        }
+
+        public static bool SamePath(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            try { return string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        public static string StatusText(State s)
+        {
+            switch (s)
+            {
+                case State.On: return "已启用：桌面右键第一层直接显示“ClearDesk 新建组件”。";
+                case State.Moved: return "已启用，但 ClearDesk 文件夹已移动；正在自动重新注册，失败时请点“一键启用”。";
+                default: return "未启用，使用「显示更多选项」中的菜单。";
+            }
+        }
+
+        static string StatusFile { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClearDesk", "shell", "menu-status.txt"); } }
+
+        // Runs enable-menu.ps1 / disable-menu.ps1 hidden and returns (exit code, message).
+        public static System.Threading.Tasks.Task<KeyValuePair<int, string>> Run(bool enable, bool repair = false)
+        {
+            return System.Threading.Tasks.Task.Run(delegate
+            {
+                string script = Path.Combine(Program.Base, enable ? "enable-menu.ps1" : "disable-menu.ps1");
+                try { File.Delete(StatusFile); } catch { }
+                var info = new System.Diagnostics.ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\"" + (repair ? " -Repair" : ""))
+                {
+                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Program.Base
+                };
+                int code = -1;
+                using (var process = System.Diagnostics.Process.Start(info))
+                {
+                    if (!process.WaitForExit(5 * 60 * 1000)) { try { process.Kill(); } catch { } return new KeyValuePair<int, string>(-1, "超时"); }
+                    code = process.ExitCode;
+                }
+                string message = "";
+                try
+                {
+                    var lines = File.ReadAllText(StatusFile, Encoding.UTF8).Split(new[] { '\n' }, 2);
+                    message = lines.Length > 1 ? lines[1].Trim() : "";
+                }
+                catch { }
+                return new KeyValuePair<int, string>(code, message);
+            });
+        }
+
+        // Folder moved since registration: re-register silently (certificate is already trusted, no UAC).
+        public static void RepairIfMoved()
+        {
+            if (!Available || Program.Preview) return;
+            System.Threading.Tasks.Task.Run(async delegate
+            {
+                try
+                {
+                    if (Status(InstalledLocation()) != State.Moved) return;
+                    var r = await Run(true, true);
+                    Program.Log(new Exception("ModernMenu repair: " + r.Key + " " + r.Value));
+                }
+                catch (Exception e) { Program.Log(e); }
+            });
         }
     }
 

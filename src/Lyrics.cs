@@ -93,10 +93,10 @@ namespace ClearDesk
             using(var request=new HttpRequestMessage(HttpMethod.Get,url))
             {
                 if(url.StartsWith("https://c.y.qq.com/",StringComparison.Ordinal))
-                { request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClearDesk/2.0.1"); request.Headers.Referrer=new Uri("https://y.qq.com/portal/player.html"); }
+                { request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClearDesk/2.0.2"); request.Headers.Referrer=new Uri("https://y.qq.com/portal/player.html"); }
                 else if(url.StartsWith("https://music.163.com/",StringComparison.Ordinal))
-                { request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClearDesk/2.0.1"); request.Headers.Referrer=new Uri("https://music.163.com/"); }
-                else request.Headers.UserAgent.ParseAdd("ClearDesk/2.0.1 (+https://github.com/visual-life/ClearDesk)");
+                { request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClearDesk/2.0.2"); request.Headers.Referrer=new Uri("https://music.163.com/"); }
+                else request.Headers.UserAgent.ParseAdd("ClearDesk/2.0.2 (+https://github.com/visual-life/ClearDesk)");
                 using(var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false))
                 {
                     if(response.StatusCode==HttpStatusCode.NotFound) return null;

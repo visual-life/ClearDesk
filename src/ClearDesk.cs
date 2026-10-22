@@ -182,6 +182,7 @@ namespace ClearDesk
             {
                 InstancePipe.Listen(HandleRemote);
                 DesktopMenu.Sync();
+                ModernMenu.RepairIfMoved();
             }
             string requested = WidgetCatalog.Requested(args);
             if (requested != null)

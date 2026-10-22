@@ -12,7 +12,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.1";
+        internal const string Version = "2.0.2";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -118,14 +118,16 @@ namespace ClearDesk
             var rows = new StackPanel(); var panel = new StackPanel(); var label = Label(title,16,"#182337"); label.FontWeight = FontWeights.SemiBold; label.Margin = new Thickness(0,0,0,8); panel.Children.Add(label); panel.Children.Add(rows);
             var g = new Group { Name = title, Rows = rows, Card = new Border { Background = Brushes.White, BorderBrush = Color("#E0E5EE"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(13), Padding = new Thickness(20,16,20,10), Margin = new Thickness(0,0,0,16), Child = panel } }; pages[page].Groups.Add(g); return g;
         }
-        void Row(Group group, string title, string description, FrameworkElement control = null)
+        TextBlock Row(Group group, string title, string description, FrameworkElement control = null)
         {
+            TextBlock hintBlock = null;
             var row = new Grid { Margin = new Thickness(0,0,0,0) }; row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var labels = new StackPanel { Margin = new Thickness(0,8,control == null ? 0 : 20,8), VerticalAlignment = VerticalAlignment.Center }; labels.Children.Add(Label(title));
-            if (!string.IsNullOrEmpty(description)) { var hint = Label(description,12,"#7D889B"); hint.Margin = new Thickness(0,4,0,0); labels.Children.Add(hint); }
+            if (!string.IsNullOrEmpty(description)) { var hint = Label(description,12,"#7D889B"); hint.Margin = new Thickness(0,4,0,0); labels.Children.Add(hint); hintBlock = hint; }
             row.Children.Add(labels); if (control != null) { control.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(control,1); row.Children.Add(control); }
             var line = new Border { BorderBrush = Color("#EDF0F5"), BorderThickness = new Thickness(0,1,0,0), Child = row };
             group.Rows.Children.Add(line); group.Entries.Add(new KeyValuePair<FrameworkElement,string>(line, title + " " + description));
+            return hintBlock;
         }
         void Toggle(Group group, string title, string description, bool initial, Action<bool> change)
         {
@@ -193,8 +195,39 @@ namespace ClearDesk
             if (ModernMenu.Available)
             {
                 Toggle(g,"Windows 11 一级菜单显示","已安装一级菜单时，在右键第一层显示“ClearDesk 新建组件”。",state.ModernMenu,v=>{ state.ModernMenu=v; DesktopMenu.Sync(); });
-                Row(g,"Windows 11 一级菜单","安装后无需点“显示更多选项”。首次安装会请求一次管理员权限以信任随附的自签名证书；移动 ClearDesk 文件夹后需重新安装。",ActionButton("安装 / 修复",delegate { ModernMenu.RunScript(true); }));
-                Row(g,"卸载一级菜单","移除 Windows 11 一级菜单（经典菜单仍由上方开关控制）。",ActionButton("卸载",delegate { ModernMenu.RunScript(false); }));
+                var menuButtons = new StackPanel { Orientation = Orientation.Horizontal };
+                Button enableMenu = null, disableMenu = null; TextBlock menuStatus = null;
+                Action<string> showMenuState = delegate (string extra)
+                {
+                    var location = ModernMenu.InstalledLocation();
+                    if (menuStatus != null) menuStatus.Text = ModernMenu.StatusText(ModernMenu.Status(location)) + (string.IsNullOrEmpty(extra) ? "" : "\n" + extra);
+                    if (disableMenu != null) disableMenu.IsEnabled = location != null;
+                };
+                Func<bool, System.Threading.Tasks.Task> runMenu = async delegate (bool enable)
+                {
+                    enableMenu.IsEnabled = disableMenu.IsEnabled = false;
+                    menuStatus.Text = enable ? "正在启用…（请在弹出的管理员授权窗口中选择“是”）" : "正在关闭并卸载…";
+                    var r = await ModernMenu.Run(enable);
+                    enableMenu.IsEnabled = true;
+                    showMenuState(r.Key == 0 ? r.Value : "未完成：" + r.Value);
+                    if (r.Key == 0) DesktopMenu.Sync();
+                };
+                enableMenu = ActionButton("一键启用", async delegate
+                {
+                    var answer = MessageBox.Show(this,
+                        "将在本机启用 Windows 11 桌面右键一级菜单“ClearDesk 新建组件”：\n\n" +
+                        "1. 在当前用户下生成一张仅本机使用的自签名证书（私钥不可导出，不会上传或随软件分发）；\n" +
+                        "2. 用它为菜单组件签名，并以当前文件夹注册到 Windows；\n" +
+                        "3. 让系统信任这张证书需要管理员权限，接下来会弹出一次 UAC 授权。\n\n" +
+                        "以后可随时点“关闭/卸载”移除程序包和证书。是否继续？",
+                        "启用桌面右键一级菜单", MessageBoxButton.OKCancel, MessageBoxImage.Information);
+                    if (answer == MessageBoxResult.OK) await runMenu(true);
+                }, true);
+                enableMenu.Margin = new Thickness(0,0,8,0);
+                disableMenu = ActionButton("关闭/卸载", async delegate { await runMenu(false); });
+                menuButtons.Children.Add(enableMenu); menuButtons.Children.Add(disableMenu);
+                menuStatus = Row(g,"桌面右键一级菜单",ModernMenu.StatusText(ModernMenu.State.Off),menuButtons);
+                showMenuState(null);
             }
             Row(g,"便签","可新建多张，自动保存；右键可换颜色或删除。",ActionButton("新建便签",delegate { Program.NewNote(); }));
             g=AddGroup(4,"天气与隐私");

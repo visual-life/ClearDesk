@@ -137,6 +137,24 @@ namespace ClearDesk
             shown = true;
         }
 
+        // Fades the blur together with the window content (no pop-in after the window is shown).
+        public float TargetOpacity { get; private set; } = 1f;
+        public void Fade(float value, int milliseconds)
+        {
+            if (disposed || !Enabled) return;
+            TargetOpacity = value;
+            if (milliseconds <= 0)
+            {
+                visual.StopAnimation("Opacity");
+                visual.Opacity = value;
+                return;
+            }
+            var animation = compositor.CreateScalarKeyFrameAnimation();
+            animation.InsertKeyFrame(1f, value, compositor.CreateCubicBezierEasingFunction(new Vector2(0.215f, 0.61f), new Vector2(0.355f, 1f)));
+            animation.Duration = TimeSpan.FromMilliseconds(milliseconds);
+            visual.StartAnimation("Opacity", animation);
+        }
+
         public void Dispose()
         {
             if (disposed) return;

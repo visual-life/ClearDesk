@@ -27,3 +27,16 @@ popup-benchmark.json
 .env
 .env.*
 !.env.example
+
+# local diagnostics and scratch output
+/diagbin/
+/d[0-9]*.txt
+/diag*.txt
+/m.txt
+/m_*.txt
+/music-diag.txt
+/p.txt
+/q[0-9]*.txt
+/shot*.png
+/widget.png
+*.mkv
