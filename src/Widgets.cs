@@ -36,6 +36,11 @@ namespace ClearDesk
         public bool WasClosed;
         bool ready;
         Point? dragStart;
+        bool dragging;
+        Vector dragOffset;
+        Border toast;
+        TextBlock lockBadge;
+        MenuItem lockItem;
         public string ExportName
         {
             get
@@ -129,10 +134,28 @@ namespace ClearDesk
                 var point=e.GetPosition(this); var delta=point-dragStart.Value;
                 if (System.Math.Abs(delta.X)<SystemParameters.MinimumHorizontalDragDistance && System.Math.Abs(delta.Y)<SystemParameters.MinimumVerticalDragDistance) return;
                 dragStart=null;
-                try { DragMove(); Program.Save(); } catch (InvalidOperationException) { }
+                BeginDrag();
                 e.Handled=true;
             };
-            PreviewMouseLeftButtonUp += delegate { dragStart=null; };
+            PreviewMouseMove += delegate (object sender, MouseEventArgs e)
+            {
+                if (!dragging) return;
+                if (e.LeftButton != MouseButtonState.Pressed) { EndDrag(); return; }
+                DragTo(CursorInfo.Dip(this), (Keyboard.Modifiers & ModifierKeys.Alt) != 0);
+                e.Handled = true;
+            };
+            PreviewMouseLeftButtonUp += delegate { dragStart=null; if (dragging) EndDrag(); };
+            LostMouseCapture += delegate { if (dragging) EndDrag(); };
+            lockBadge = new TextBlock
+            {
+                Text = "\uE72E", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 11, Foreground = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 12, 16, 0),
+                Opacity = 0, IsHitTestVisible = false, ToolTip = "位置已锁定"
+            };
+            Panel.SetZIndex(lockBadge, 90);
+            Root.Children.Add(lockBadge);
+            MouseEnter += delegate { if (State.Locked && !(this is DockWindow) && !(this is LaunchpadWindow)) Fade(lockBadge, .6, 160); };
+            MouseLeave += delegate { Fade(lockBadge, 0, 220); };
             LocationChanged += delegate
             {
                 UpdatePaper();
@@ -232,11 +255,18 @@ namespace ClearDesk
                 SetCollapsed();
                 Program.Save();
             }));
-            c.Items.Add(Item("锁定 / 解锁位置", delegate
+            lockItem = new MenuItem { Tag = "lock", StaysOpenOnClick = false };
+            lockItem.Click += delegate { SetLocked(!State.Locked); };
+            UpdateLockItem();
+            c.Opened += delegate { UpdateLockItem(); };
+            c.Items.Add(lockItem);
+            var create = new MenuItem { Header = "新建组件", Tag = "new" };
+            foreach (var kind in WidgetCatalog.Kinds)
             {
-                State.Locked = !State.Locked;
-                Program.Save();
-            }, State.Locked));
+                string id = kind.Key;
+                create.Items.Add(Item(kind.Value, delegate { Program.NewWidget(id); }));
+            }
+            c.Items.Add(create);
             c.Items.Add(Item("打开设置", Program.ShowSettings));
             c.Items.Add(Item("恢复位置", delegate
             {
@@ -248,6 +278,92 @@ namespace ClearDesk
             }));
             c.Items.Add(Item("关闭组件", Disable));
             return c;
+        }
+
+        internal static string LockActionText(bool locked) { return locked ? "解锁位置" : "锁定位置"; }
+        internal static string LockStateText(bool locked) { return locked ? "位置已锁定" : "位置未锁定"; }
+        internal MenuItem TestLockItem { get { UpdateLockItem(); return lockItem; } }
+        internal Border TestToast { get { return toast; } }
+        internal bool IsLocked { get { return State.Locked; } }
+
+        void UpdateLockItem()
+        {
+            if (lockItem == null) return;
+            bool locked = State.Locked;
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock { Text = LockActionText(locked) });
+            panel.Children.Add(new TextBlock { Text = "当前：" + LockStateText(locked), FontSize = 10.5, Margin = new Thickness(0, 2, 0, 0), Foreground = new SolidColorBrush(locked ? Color.FromRgb(255, 200, 120) : Color.FromRgb(150, 160, 178)) });
+            lockItem.Header = panel;
+            lockItem.Icon = new TextBlock { Text = locked ? "\uE72E" : "\uE785", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Foreground = new SolidColorBrush(locked ? Color.FromRgb(255, 200, 120) : Color.FromRgb(200, 208, 222)), VerticalAlignment = VerticalAlignment.Center };
+        }
+
+        internal void SetLocked(bool locked)
+        {
+            State.Locked = locked;
+            Program.Save();
+            UpdateLockItem();
+            Toast(locked ? "\uE72E" : "\uE785", LockStateText(locked));
+            if (lockBadge != null) Fade(lockBadge, locked && IsMouseOver ? .6 : 0, 160);
+        }
+
+        static void Fade(UIElement e, double to, int ms)
+        {
+            e.BeginAnimation(OpacityProperty, new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms)) { EasingFunction = new QuadraticEase() });
+        }
+
+        // Brief pill-shaped notice centred near the bottom of the widget.
+        internal void Toast(string glyph, string text)
+        {
+            if (toast != null) Root.Children.Remove(toast);
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 7, 0) });
+            row.Children.Add(new TextBlock { Text = text, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+            toast = new Border
+            {
+                Child = row, Background = new SolidColorBrush(Color.FromArgb(225, 24, 26, 32)), BorderBrush = new SolidColorBrush(Color.FromArgb(60, 255, 255, 255)), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 6, 14, 6), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 14), IsHitTestVisible = false, Opacity = 0
+            };
+            Panel.SetZIndex(toast, 100);
+            Root.Children.Add(toast);
+            var mine = toast;
+            var a = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(1500) };
+            a.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140))));
+            a.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1150))));
+            a.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1500))));
+            a.Completed += delegate { if (toast == mine) { Root.Children.Remove(mine); toast = null; } };
+            mine.BeginAnimation(OpacityProperty, a);
+        }
+
+        void BeginDrag()
+        {
+            var cursor = CursorInfo.Dip(this);
+            dragOffset = cursor - new Point(Left, Top);
+            dragging = true;
+            CaptureMouse();
+        }
+
+        internal void DragTo(Point cursor, bool free)
+        {
+            double x = cursor.X - dragOffset.X, y = cursor.Y - dragOffset.Y;
+            if (Program.S.Magnet && !free)
+            {
+                var r = MagnetSnap.Snap(new Rect(x, y, ActualWidth, ActualHeight), Program.SnapTargets(this), CursorInfo.Areas(this), MagnetSnap.Threshold);
+                x = r.X; y = r.Y;
+                GuideOverlay.Show(r.Guides);
+            }
+            else
+                GuideOverlay.Hide();
+            Left = x;
+            Top = y;
+        }
+
+        void EndDrag()
+        {
+            dragging = false;
+            if (IsMouseCaptured) ReleaseMouseCapture();
+            GuideOverlay.Hide();
+            try { Program.Save(); } catch (Exception e) { Program.Log(e); }
         }
 
         protected virtual void Disable()

@@ -12,7 +12,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "1.9.2";
+        internal const string Version = "2.0.0";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -179,13 +179,16 @@ namespace ClearDesk
             g=AddGroup(4,"Dock 材质");
             var dock=Program.Widget("dock",0,0,620,140);
             Choice(g,"背景材质","图标保持清晰；磨砂实时模糊后方窗口。",new[]{"玻璃 · 实时清透","磨砂 · 实时模糊"},dock.Material=="frosted"?1:0,i => { dock.Material=i==1?"frosted":"liquid"; dock.MaterialSelected=true; });
-            Row(g,"组件材质","右键各桌面组件可独立选择材质、锁定位置或恢复位置。");
+            Row(g,"组件材质","右键各桌面组件可独立选择材质、锁定位置、新建组件或恢复位置。");
             g=AddGroup(4,"桌面组件");
             Toggle(g,"时钟","时间与日期。",state.Clock,v=>state.Clock=v);
             Toggle(g,"性能","CPU、GPU、内存与网络。",state.Performance,v=>state.Performance=v);
             Toggle(g,"日历","查看日期。",state.Calendar,v=>state.Calendar=v);
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
             Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
+            Toggle(g,"磁吸对齐","拖动组件时吸附屏幕边缘、其他组件的边缘与中线及等距间隔，并显示参考线；按住 Alt 临时关闭。",state.Magnet,v=>state.Magnet=v);
+            Toggle(g,"桌面右键新建组件","在桌面右键菜单加入“ClearDesk 新建组件”。Windows 11 中位于“显示更多选项”里。",state.DesktopMenu,v=>{ state.DesktopMenu=v; DesktopMenu.Sync(); });
+            Row(g,"便签","可新建多张，自动保存；右键可换颜色或删除。",ActionButton("新建便签",delegate { Program.NewNote(); }));
             g=AddGroup(4,"天气与隐私");
             Toggle(g,"自动天气联网","IPwho.is 获取近似城市，Open-Meteo 接收城市坐标获取天气。",state.WeatherOnline,v=>state.WeatherOnline=v);
             Row(g,"所在地自动获取","仅自动定位，无手选城市。代理或 VPN 可能影响城市；右键天气可重新定位。不保存 IP 或坐标。");

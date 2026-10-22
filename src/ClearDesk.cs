@@ -23,6 +23,7 @@ namespace ClearDesk
         public bool MaterialSelected = false;
         public bool Locked = false, Collapsed = false, List = false, Desktop = false, Enabled = true;
         public string Material = "liquid";
+        public string Text = "", NoteColor = "amber";
         public List<string> Items = new List<string>();
         public List<string> Excluded = new List<string>();
     }
@@ -32,6 +33,8 @@ namespace ClearDesk
         public bool Icons = true, AutoHide = false, RestoreOnInput = true, Taskbar = false, TaskbarFade = false, Animation = false, RestoreAnimation = true, Dock = true, Clock = true, Performance = true, Calendar = false, Weather = false, Almanac = false, Music = false, WeatherOnline = false, HideAtStart = false;
         public int ConfigVersion = 1;
         public bool GpuRendering = false;
+        public bool Magnet = true, DesktopMenu = true;
+        public List<BoxData> Notes = new List<BoxData>();
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
@@ -112,10 +115,19 @@ namespace ClearDesk
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "--uninstall")
+            {
+                try { DesktopMenu.Unregister(); } catch (Exception e) { Log(e); }
+                try { using (var k = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run", true)) if (k != null) k.DeleteValue("ClearDesk", false); } catch (Exception e) { Log(e); }
+                return;
+            }
+
             bool created;
             mutex = new Mutex(true, "Local\\ClearDesk." + Environment.UserName + (args.Contains("--regression-test") ? ".Regression" : Preview ? ".Preview" : ""), out created);
             if (!created)
             {
+                if (!Preview && InstancePipe.Send(args))
+                    return;
                 MessageBox.Show("ClearDesk 已在运行，请双击通知区域的图标打开设置。", "ClearDesk");
                 return;
             }
@@ -166,6 +178,14 @@ namespace ClearDesk
             };
             refresh.Start();
             MemoryTrim.Start();
+            if (!Preview)
+            {
+                InstancePipe.Listen(HandleRemote);
+                DesktopMenu.Sync();
+            }
+            string requested = WidgetCatalog.Requested(args);
+            if (requested != null)
+                App.Dispatcher.BeginInvoke(new Action(delegate { NewWidget(requested); }), DispatcherPriority.ApplicationIdle);
             if (args.Contains("--render"))
             {
                 S.Calendar = true;
@@ -176,7 +196,7 @@ namespace ClearDesk
                 Rebuild();
             }
 
-            if (!args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
+            if (requested == null && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
                 ShowSettings();
             if (args.Contains("--popup-benchmark"))
                 PopupBenchmark.Start();
@@ -264,6 +284,8 @@ namespace ClearDesk
                 S.Boxes = new List<BoxData>();
             if (S.Pins == null)
                 S.Pins = new List<string>();
+            if (S.Notes == null)
+                S.Notes = new List<BoxData>();
             if (S.Widgets == null)
                 S.Widgets = new Dictionary<string, BoxData>();
             if (S.ConfigVersion < 2)
@@ -394,6 +416,13 @@ namespace ClearDesk
             {
                 App.Dispatcher.Invoke(new Action(ShowSettings));
             });
+            var create = new Forms.ToolStripMenuItem("新建组件");
+            foreach (var kind in WidgetCatalog.Kinds)
+            {
+                string id = kind.Key;
+                create.DropDownItems.Add(kind.Value, null, delegate { App.Dispatcher.Invoke(new Action(delegate { NewWidget(id); })); });
+            }
+            m.Items.Add(create);
             m.Items.Add("显示 / 隐藏桌面图标", null, delegate
             {
                 App.Dispatcher.Invoke(new Action(delegate
@@ -449,6 +478,76 @@ namespace ClearDesk
                 AddWindow(new WeatherWindow());
             if (S.Music)
                 AddWindow(new MusicWindow());
+            foreach (var n in S.Notes.ToArray())
+                AddWindow(new NoteWindow(n));
+        }
+
+        static void HandleRemote(string[] args)
+        {
+            string kind = WidgetCatalog.Requested(args);
+            if (kind != null) NewWidget(kind);
+            else ShowSettings();
+        }
+
+        internal static IList<Rect> SnapTargets(Window self)
+        {
+            return windows.Where(w => w != self && !w.WasClosed && w.IsVisible && !(w is LaunchpadWindow) && w.ActualWidth > 0)
+                .Select(w => new Rect(w.Left, w.Top, w.ActualWidth, w.ActualHeight)).ToList();
+        }
+
+        public static NoteWindow NewNote()
+        {
+            var wa = SystemParameters.WorkArea;
+            int n = S.Notes.Count;
+            var b = new BoxData
+            {
+                Title = "便签",
+                X = wa.Left + wa.Width / 2 - 140 + (n % 6) * 28,
+                Y = wa.Top + wa.Height / 3 - 100 + (n % 6) * 28,
+                Width = 280,
+                Height = 240,
+                NoteColor = NoteWindow.Palette[n % (NoteWindow.Palette.Length - 1)][0]
+            };
+            S.Notes.Add(b);
+            Save();
+            var w = new NoteWindow(b);
+            AddWindow(w);
+            w.Activate();
+            w.TestBox.Focus();
+            return w;
+        }
+
+        // Creates (or reveals) a widget by catalog kind. Returns the window shown.
+        public static GlassWindow NewWidget(string kind)
+        {
+            if (!WidgetCatalog.IsKnown(kind)) return null;
+            if (kind == "note") return NewNote();
+            if (kind == "box") { NewBox(); return windows.LastOrDefault(); }
+            Func<GlassWindow, bool> match;
+            Func<GlassWindow> create;
+            switch (kind)
+            {
+                case "clock": S.Clock = true; match = w => w is ClockWindow; create = () => new ClockWindow(); break;
+                case "weather": S.Weather = true; match = w => w is WeatherWindow; create = () => new WeatherWindow(); break;
+                case "music": S.Music = true; match = w => w is MusicWindow; create = () => new MusicWindow(); break;
+                case "calendar": S.Calendar = true; match = w => w is CalendarWindow && w.ExportName == "calendar"; create = () => new CalendarWindow(false); break;
+                case "almanac": S.Almanac = true; match = w => w is CalendarWindow && w.ExportName == "almanac"; create = () => new CalendarWindow(true); break;
+                default: S.Performance = true; match = w => w is PerformanceWindow; create = () => new PerformanceWindow(); break;
+            }
+            BoxData state;
+            if (S.Widgets.TryGetValue(kind, out state)) state.Enabled = true;
+            Save();
+            var existing = windows.FirstOrDefault(w => !w.WasClosed && match(w));
+            if (existing != null)
+            {
+                existing.Show();
+                existing.Toast("\uE8A7", "已在桌面上");
+                return existing;
+            }
+            var created = create();
+            AddWindow(created);
+            created.Toast("\uE710", "已添加");
+            return created;
         }
 
         public static void AddWindow(GlassWindow w)
@@ -674,6 +773,7 @@ namespace ClearDesk
                     throw new Exception("Config round-trip");
                 results.Add("PASS: Chinese/path config round-trip");
                 MusicTests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
+                V2Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 var d = new DateTime(2026, 10, 19);
                 string lunar = CalendarWindow.Lunar(d);
                 if (string.IsNullOrEmpty(lunar))
