@@ -2,15 +2,15 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.9.1**，维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **1.9.2**（本地待发布），维护者 [visual-life](https://github.com/visual-life)。
+
+## 1.9.2 新功能
+
+内存占用大幅降低（默认软件渲染、壁纸按屏幕尺寸解码、GPU 采样改为 PDH、空闲回收），本机私有内存 314 MB → 138 MB；更换新图标。详见 [1.9.2 更新说明](docs/releases/1.9.2.md)。
 
 ## 1.9.1 新功能
 
-修复网易云 3.1.1 歌曲／歌词读取、最小化后进度与歌词停住，以及部分 QQ QRC 歌词解析失败；增加 QQ 音乐／网易云在线歌词和模糊匹配。细线进度条支持点击／拖动跳转。详见 [1.9.1 更新说明](docs/releases/1.9.1.md)。
-
-<img src="docs/images/music-lyrics-seek-1.9.1.png" width="340" alt="ClearDesk 1.9.1 用户提供的实际运行截图：歌词、细线进度条和 QQ 音乐控制">
-
-用户提供的 1.9.1 实际运行截图，展示歌词区域与进度条外观；静态图片不展示跳转过程。
+修复网易云 3.1.1 读不到歌曲与歌词；新增 QQ 音乐／网易云在线歌词与模糊匹配；进度条改为细线并可点击／拖动跳转（含 QQ 音乐、网易云，最小化时也会尝试）。详见 [1.9.1 更新说明](docs/releases/1.9.1.md)。
 
 ## 1.8.2 新功能
 
@@ -26,29 +26,20 @@ Dock 关闭操作置底；音乐组件增加可选同步歌词与本地 LRC 导�
 
 ## 下载
 
-推荐下载 **1.9.1**，包含 1.8.x 的全部功能及新的歌词、进度修复。
+当前公开发行版仍为 1.7.0；1.9.2 源码和本地测试包已准备，尚未发布 GitHub Release。
 
-[下载 ClearDesk 1.9.1（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.9.1/ClearDesk-1.9.1-windows-x64-with-source.zip) · [1.9.1 说明与 SHA-256](https://github.com/visual-life/ClearDesk/releases/tag/v1.9.1)
-
-[下载历史版 1.8.2（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.8.2/ClearDesk-1.8.2-windows-x64-with-source.zip) · [1.8.2 说明与 SHA-256](https://github.com/visual-life/ClearDesk/releases/tag/v1.8.2)
-
-| 版本 | 相比上一阶段的更新 | 使用提示 |
-| --- | --- | --- |
-| **1.8.2** | 优先读 QQ QRC／网易云 LRC 客户端缓存，后台补读并显示歌词来源 | 保留旧的网易云后台进度限制；推荐使用 1.9.1 |
-| **1.9.1** | 歌词兼容修复、在线歌词补充、网易云最小化计时、点击／拖动进度跳转 | 网易云需启用同步模式；QQ 长时间最小化后跳转可能失败 |
-
-从 1.7.0 升级还会获得：自动定位天气、Dock 右键关闭应用并置底、收纳右键新建文件、启动台发送至收纳、更大的组件拖动区域、减少重复查询，以及歌词开关和 LRC 导入。详见 [1.8.0](docs/releases/1.8.0.md) 和 [1.8.1](docs/releases/1.8.1.md)。
+[下载 ClearDesk 1.7.0（Windows x64，含完整源码）](https://github.com/visual-life/ClearDesk/releases/download/v1.7.0/ClearDesk-1.7.0-windows-x64-with-source.zip) · [版本说明与校验文件](https://github.com/visual-life/ClearDesk/releases/tag/v1.7.0)
 
 完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8。
 
-## 历史更新：1.6.2 与 1.7.0
+## 从 1.6.0 升级：这两版改了什么
 
 | 版本 | 更新重点 |
 | --- | --- |
 | [1.6.2](docs/releases/1.6.2.md) | Dock 可选玻璃／实时磨砂，后方内容实时变化；修复黑底、矩形边角和白底白字二级菜单 |
 | [1.7.0](docs/releases/1.7.0.md) | 全新浅色分类设置、搜索、统一控件与固定操作栏；设置中选择音乐来源和 Dock 材质 |
 
-**当前 1.9.1 同样包含以上全部更新。** 1.6.1 为本地过渡版本，相关修复已纳入 1.6.2。
+**直接下载 1.7.0 即可获得以上全部更新。** 1.6.1 为本地过渡版本，相关修复已纳入 1.6.2。
 
 ## 1.7.0 设置界面
 

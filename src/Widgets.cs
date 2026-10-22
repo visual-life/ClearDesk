@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -371,7 +371,7 @@ namespace ClearDesk
         ProgressBar cp, gp, mp;
         long lastIdle, lastKernel, lastUser, lastRx, lastTx;
         DateTime last = DateTime.UtcNow;
-        List<PerformanceCounter> gpuCounters = new List<PerformanceCounter>();
+        readonly GpuUsage gpuUsage = new GpuUsage();
         int cycles;
         public PerformanceWindow() : base(Program.Widget("performance", SystemParameters.WorkArea.Right - 370, 20, 350, 210), "性能")
         {
@@ -389,6 +389,7 @@ namespace ClearDesk
             Body.Children.Add(grid);
             Native.GetSystemTimes(out lastIdle, out lastKernel, out lastUser);
             ReadNet(out lastRx, out lastTx);
+            Closed += delegate { gpuUsage.Dispose(); };
             Tick(2000, Update);
         }
 
@@ -436,7 +437,6 @@ namespace ClearDesk
         }
 
         bool sampling;
-        Dictionary<string, CounterSample> gpuPrevious = new Dictionary<string, CounterSample>();
         async void Update()
         {
             if (sampling || WasClosed || (IsLoaded && (!IsVisible || State.Collapsed)))
@@ -469,22 +469,7 @@ namespace ClearDesk
                     if (cycles++ % 3 == 0)
                         try
                         {
-                            var category = new PerformanceCounterCategory("GPU Engine");
-                            var samples = category.ReadCategory()["Utilization Percentage"];
-                            double sum = 0;
-                            var fresh = new Dictionary<string, CounterSample>();
-                            foreach (InstanceData instance in samples.Values)
-                            {
-                                if (!instance.InstanceName.Contains("engtype_3D"))
-                                    continue;
-                                CounterSample previous;
-                                fresh[instance.InstanceName] = instance.Sample;
-                                if (gpuPrevious.TryGetValue(instance.InstanceName, out previous))
-                                    sum += CounterSample.Calculate(previous, instance.Sample);
-                            }
-
-                            gpuPrevious = fresh;
-                            gpuValue = Math.Max(0, Math.Min(100, sum));
+                            gpuValue = gpuUsage.Sample();
                         }
                         catch
                         {

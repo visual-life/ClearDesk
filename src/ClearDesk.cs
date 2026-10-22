@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -31,6 +31,7 @@ namespace ClearDesk
     {
         public bool Icons = true, AutoHide = false, RestoreOnInput = true, Taskbar = false, TaskbarFade = false, Animation = false, RestoreAnimation = true, Dock = true, Clock = true, Performance = true, Calendar = false, Weather = false, Almanac = false, Music = false, WeatherOnline = false, HideAtStart = false;
         public int ConfigVersion = 1;
+        public bool GpuRendering = false;
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
@@ -121,6 +122,10 @@ namespace ClearDesk
 
             Directory.CreateDirectory(Data);
             Load();
+            // GPU rendering maps D3D/driver heaps (~150-170 MB private on iGPUs) for a
+            // handful of small, mostly static widgets. Default to software rendering.
+            if (!S.GpuRendering && Environment.GetEnvironmentVariable("CLEARDESK_GPU") != "1")
+                System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
             App = new Application
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown
@@ -160,6 +165,7 @@ namespace ClearDesk
                     Services.Tick();
             };
             refresh.Start();
+            MemoryTrim.Start();
             if (args.Contains("--render"))
             {
                 S.Calendar = true;
@@ -362,11 +368,24 @@ namespace ClearDesk
             }
         }
 
+        static System.Drawing.Icon TrayIcon()
+        {
+            try
+            {
+                using (var s = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("ClearDesk.AppIcon.ico"))
+                    return new System.Drawing.Icon(s, Forms.SystemInformation.SmallIconSize);
+            }
+            catch
+            {
+                return System.Drawing.Icon.ExtractAssociatedIcon(Path.Combine(Base, "ClearDesk.exe"));
+            }
+        }
+
         static void SetupTray()
         {
             tray = new Forms.NotifyIcon
             {
-                Icon = System.Drawing.Icon.ExtractAssociatedIcon(Path.Combine(Base, "ClearDesk.exe")),
+                Icon = TrayIcon(),
                 Text = "ClearDesk · 你的清透桌面",
                 Visible = true
             };
@@ -638,7 +657,7 @@ namespace ClearDesk
                 return;
             }
             settings = new SettingsWindow(SetStartup);
-            settings.Closed += delegate { settings = null; };
+            settings.Closed += delegate { settings = null; MemoryTrim.Soon(TimeSpan.FromSeconds(2)); };
             settings.Show();
         }
 

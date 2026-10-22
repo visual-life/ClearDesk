@@ -12,7 +12,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "1.9.1";
+        internal const string Version = "1.9.2";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -159,6 +159,7 @@ namespace ClearDesk
             Toggle(g,"透明任务栏","保留任务栏图标清晰度，退出时恢复。",state.Taskbar,v => { state.Taskbar=v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"窗口最小化动画","实验性 · 部分窗口可能不支持。",state.Animation,v => { state.Animation=v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"恢复窗口时播放动画","从任务栏或桌面恢复窗口时播放。",state.RestoreAnimation,v => state.RestoreAnimation=v);
+        Toggle(g,"GPU \u786c\u4ef6\u52a0\u901f\u6e32\u67d3","\u52a8\u753b\u66f4\u987a\u6ed1\uff0c\u4f46\u5185\u5b58\u5360\u7528\u7ea6\u589e\u52a0 150 MB\uff1b\u91cd\u542f ClearDesk \u540e\u751f\u6548\u3002\u9ed8\u8ba4\u5173\u95ed\u4ee5\u8282\u7701\u5185\u5b58\u3002",state.GpuRendering,v => state.GpuRendering=v);
             g=AddGroup(1,"桌面收纳");
             Row(g,"新建收纳格","拖入文件只添加引用，不移动原文件。",ActionButton("新建",Program.NewBox));
             Row(g,"重新显示桌面收纳","恢复已关闭或折叠的收纳格。",ActionButton("恢复显示",delegate { foreach(var b in state.Boxes) { b.Enabled=true; b.Collapsed=false; b.Height=Math.Max(170,b.Height); } Changed(); Program.Rebuild(); }));

@@ -249,7 +249,7 @@ namespace ClearDesk
                     dc.DrawRectangle(new SolidColorBrush(Color.FromRgb((byte)(color & 255), (byte)((color >> 8) & 255), (byte)((color >> 16) & 255))), null, union);
                     foreach (var monitor in monitors)
                     {
-                        var image = Read(monitor.Path);
+                        var image = Read(monitor.Path, (int)Math.Ceiling(Math.Max(monitor.Bounds.Width, monitor.Bounds.Height)));
                         if (image == null)
                             continue;
                         var area = position == 5 ? union : monitor.Bounds;
@@ -307,12 +307,12 @@ namespace ClearDesk
             }
         }
 
-        static BitmapSource Read(string path)
+        static BitmapSource Read(string path, int longest)
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
                 return null;
             BitmapSource cached;
-            if (images.TryGetValue(path, out cached))
+            if (images.TryGetValue(path + "|" + longest, out cached))
                 return cached;
             try
             {
@@ -320,9 +320,26 @@ namespace ClearDesk
                 image.BeginInit();
                 image.CacheOption = BitmapCacheOption.OnLoad;
                 image.UriSource = new Uri(path, UriKind.Absolute);
+                // Decode no larger than the monitor (the layer is blurred anyway):
+                // a 6K wallpaper would otherwise stay resident at ~100 MB.
+                int w = 0, h = 0;
+                try
+                {
+                    using (var file = File.OpenRead(path))
+                    {
+                        var frame = BitmapDecoder.Create(file, BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.None).Frames[0];
+                        w = frame.PixelWidth; h = frame.PixelHeight;
+                    }
+                }
+                catch { }
+                if (longest > 0 && w > 0 && h > 0 && Math.Max(w, h) > longest)
+                {
+                    if (w >= h) image.DecodePixelWidth = longest; else image.DecodePixelHeight = longest;
+                }
+                image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
                 image.EndInit();
                 image.Freeze();
-                images[path] = image;
+                images[path + "|" + longest] = image;
                 return image;
             }
             catch (Exception e)

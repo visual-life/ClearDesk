@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -36,7 +36,7 @@ namespace ClearDesk
             try
             {
                 window.Show(); await Task.Delay(180); window.UpdateLayout();
-                check(window.TestCards==2 && Children<CheckBox>(window).Count()==8,"settings general page contains all eight original desktop and window switches");
+                check(window.TestCards==2 && Children<CheckBox>(window).Count()==9,"settings general page contains the eight original desktop and window switches plus GPU rendering");
                 Capture(window,"settings-general");
                 bool allPages=true;
                 for(int i=0;i<6;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
