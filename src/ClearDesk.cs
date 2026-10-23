@@ -24,6 +24,7 @@ namespace ClearDesk
         public bool Locked = false, Collapsed = false, List = false, Desktop = false, Enabled = true;
         public string Material = "liquid";
         public double Scale = 1;
+        public double CustomW = 0, CustomH = 0;
         public List<NoteImage> Images = new List<NoteImage>();
         public string Text = "", NoteColor = "amber";
         public List<string> Items = new List<string>();

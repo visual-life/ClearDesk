@@ -137,16 +137,16 @@ namespace ClearDesk
 
         internal static bool CanResetSize(WidgetEntry e)
         {
-            return e.Data != null && e.Kind != "note" && e.Kind != "box" && Math.Abs((e.Data.Scale <= 0 ? 1 : e.Data.Scale) - 1) > .001;
+            return e.Data != null && e.Kind != "note" && e.Kind != "box" && (Math.Abs((e.Data.Scale <= 0 ? 1 : e.Data.Scale) - 1) > .001 || e.Data.CustomW > 0 || e.Data.CustomH > 0);
         }
 
-        // 重置大小: back to 100% content scale.
+        // 重置大小: back to the default width/height (2.0.7 free size).
         internal static void ResetSize(WidgetEntry e)
         {
             if (e.Data == null) return;
-            e.Data.Scale = 1;
+            e.Data.Scale = 1; e.Data.CustomW = 0; e.Data.CustomH = 0;
             var w = Window(e);
-            if (w != null) w.SetScale(1, false);
+            if (w != null) w.ResetSize(false);
             Program.Save();
         }
 

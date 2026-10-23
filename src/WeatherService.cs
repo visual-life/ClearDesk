@@ -14,6 +14,13 @@ namespace ClearDesk
         internal double Temperature, Humidity, Wind;
         internal int Code;
         internal DateTime Received;
+        internal List<ForecastDay> Days = new List<ForecastDay>();
+    }
+    internal sealed class ForecastDay
+    {
+        internal DateTime Date;
+        internal int Code;
+        internal double Max, Min;
     }
     internal interface IWeatherService
     {
@@ -62,7 +69,29 @@ namespace ClearDesk
             object time; DateTime observed;
             if(!data.TryGetValue("time",out time) || !DateTime.TryParse(Convert.ToString(time,CultureInfo.InvariantCulture),CultureInfo.InvariantCulture,DateTimeStyles.None,out observed)) throw new FormatException("天气服务未返回观测时间。");
             reading.Time=observed.ToString("MM-dd HH:mm");
+            try { reading.Days=Daily(json); } catch { reading.Days=new List<ForecastDay>(); }
             return reading;
+        }
+        // Optional multi-day forecast; shown when the weather widget is made taller.
+        internal static List<ForecastDay> Daily(Dictionary<string,object> json)
+        {
+            var days=new List<ForecastDay>(); object daily;
+            if(!json.TryGetValue("daily",out daily) || !(daily is Dictionary<string,object>)) return days;
+            var d=(Dictionary<string,object>)daily; object t,c,hi,lo;
+            if(!d.TryGetValue("time",out t) || !d.TryGetValue("weather_code",out c) || !d.TryGetValue("temperature_2m_max",out hi) || !d.TryGetValue("temperature_2m_min",out lo)) return days;
+            var ta=t as System.Collections.IList; var ca=c as System.Collections.IList; var ha=hi as System.Collections.IList; var la=lo as System.Collections.IList;
+            if(ta==null || ca==null || ha==null || la==null) return days;
+            int n=Math.Min(Math.Min(ta.Count,ca.Count),Math.Min(ha.Count,la.Count));
+            for(int i=0;i<n && i<7;i++)
+            {
+                DateTime date; double code,max,min;
+                if(!DateTime.TryParse(Convert.ToString(ta[i],CultureInfo.InvariantCulture),CultureInfo.InvariantCulture,DateTimeStyles.None,out date)) continue;
+                if(!double.TryParse(Convert.ToString(ca[i],CultureInfo.InvariantCulture),NumberStyles.Float,CultureInfo.InvariantCulture,out code)) continue;
+                if(!double.TryParse(Convert.ToString(ha[i],CultureInfo.InvariantCulture),NumberStyles.Float,CultureInfo.InvariantCulture,out max)) continue;
+                if(!double.TryParse(Convert.ToString(la[i],CultureInfo.InvariantCulture),NumberStyles.Float,CultureInfo.InvariantCulture,out min)) continue;
+                days.Add(new ForecastDay { Date=date.Date,Code=(int)code,Max=max,Min=min });
+            }
+            return days;
         }
         public async Task<WeatherReading> ReadAsync(bool force,CancellationToken cancellation)
         {
@@ -74,7 +103,7 @@ namespace ClearDesk
                 cancellation.ThrowIfCancellationRequested();
                 // City-level weather needs no precise device location; do not persist IP or coordinates.
                 string lat=Math.Round(location.Item2,2).ToString("0.00",CultureInfo.InvariantCulture),lon=Math.Round(location.Item3,2).ToString("0.00",CultureInfo.InvariantCulture);
-                string url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+"&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto";
+                string url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+"&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=7&timezone=auto";
                 var reading=Parse(location.Item1,await download(url,cancellation).ConfigureAwait(false));
                 cancellation.ThrowIfCancellationRequested(); cached=reading; return reading;
             }

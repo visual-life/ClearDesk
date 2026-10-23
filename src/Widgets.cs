@@ -28,7 +28,8 @@ namespace ClearDesk
         protected Grid Root = new Grid { Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) }, Body = new Grid();
         protected Border Frame;
         protected BoxData State;
-        protected StackPanel Layout = new StackPanel();
+        internal BoxData TestState { get { return State; } }
+        protected DockPanel Layout = new DockPanel { LastChildFill = true };
         protected DockPanel Header;
         protected TextBlock Heading;
         protected DispatcherTimer Timer;
@@ -46,80 +47,160 @@ namespace ClearDesk
         Border scaleGrip;
         internal const double MinScale = .6, MaxScale = 2.5;
 
-        // Widgets with fixed internal layouts are resized by scaling their whole content
-        // proportionally; 收纳格 and 便签 resize their real layout instead.
+        Border cornerGrip, rightGrip, bottomGrip;
+        bool resizing;
+
+        // 2.0.7: widgets get free width/height. The content scale is the smaller of the two
+        // ratios (so text grows evenly and never overflows), and the remaining space is given to
+        // the layout so each widget can re-flow (more lyrics, more forecast, wider tiles…).
+        // 收纳格 and 便签 resize their real layout themselves.
         protected virtual bool ScalesContent { get { return !(this is OrganizerWindow || this is NoteWindow || this is DockWindow || this is LaunchpadWindow); } }
         internal bool Scalable { get { return ScalesContent; } }
-        internal double ContentScale { get { return ScalesContent ? Clamp(State.Scale) : 1; } }
+        internal bool HasCustomSize { get { return ScalesContent && (State.CustomW > 0 || State.CustomH > 0); } }
+        internal double ContentScale
+        {
+            get
+            {
+                if (!ScalesContent || !HasCustomSize || double.IsNaN(baseW) || double.IsNaN(baseH) || baseW <= 0 || baseH <= 0) return 1;
+                return Clamp(Math.Min(CustomW / baseW, CustomH / baseH));
+            }
+        }
+        double CustomW { get { return State.CustomW > 0 ? State.CustomW : baseW; } }
+        double CustomH { get { return State.CustomH > 0 ? State.CustomH : baseH; } }
         static double Clamp(double v) { return double.IsNaN(v) || v <= 0 ? 1 : Math.Max(MinScale, Math.Min(MaxScale, v)); }
+        internal const double MaxSizeFactor = 4;
+        /// <summary>Extra layout room (in unscaled units) beyond the default design size.</summary>
+        internal double ExtraWidth { get; private set; }
+        internal double ExtraHeight { get; private set; }
 
-        // Layout size in unscaled units; the real window is this size times the content scale.
+        // Design (default) size in unscaled units; the real window size is the custom size if any.
         public new double Width
         {
             get { return ScalesContent && !double.IsNaN(baseW) ? baseW : base.Width; }
-            set { if (ScalesContent) { baseW = value; base.Width = value * ContentScale; } else base.Width = value; }
+            set { if (ScalesContent) { baseW = value; ApplySize(); } else base.Width = value; }
         }
         public new double Height
         {
             get { return ScalesContent && !double.IsNaN(baseH) ? baseH : base.Height; }
-            set { if (ScalesContent) { baseH = value; base.Height = value * ContentScale; } else base.Height = value; }
+            set { if (ScalesContent) { baseH = value; ApplySize(); } else base.Height = value; }
         }
+        internal double DefaultWidth { get { return baseW; } }
+        internal double DefaultHeight { get { return baseH; } }
 
-        internal void SetScale(double scale, bool save = true)
+        void ApplySize()
         {
             if (!ScalesContent) return;
-            State.Scale = Math.Round(Clamp(scale), 3);
+            if (double.IsNaN(baseW) || double.IsNaN(baseH)) { if (!double.IsNaN(baseW)) base.Width = baseW; if (!double.IsNaN(baseH)) base.Height = baseH; return; }
+            // migrate 2.0.5/2.0.6 proportional scale into a custom size
+            if (Math.Abs((State.Scale <= 0 ? 1 : State.Scale) - 1) > .001)
+            {
+                if (!HasCustomSize) { double f = Clamp(State.Scale); State.CustomW = Math.Round(baseW * f); State.CustomH = Math.Round(baseH * f); }
+                State.Scale = 1;
+            }
             double s = ContentScale;
             if (scaler != null) { scaler.ScaleX = s; scaler.ScaleY = s; }
             TextOptions.SetTextFormattingMode(this, Math.Abs(s - 1) < .001 ? TextFormattingMode.Display : TextFormattingMode.Ideal);
-            if (!double.IsNaN(baseW)) base.Width = baseW * s;
-            if (!double.IsNaN(baseH)) base.Height = baseH * s;
+            double w = HasCustomSize ? CustomW : baseW, h = HasCustomSize ? CustomH : baseH;
+            base.Width = w;
+            base.Height = State.Collapsed && collapsedApplied ? 64 * s : h;
+            ExtraWidth = Math.Max(0, w / s - baseW); ExtraHeight = Math.Max(0, h / s - baseH);
+            if (scaler != null) OnResponsive(ExtraWidth, ExtraHeight);
+        }
+        bool collapsedApplied;
+
+        /// <summary>Called whenever the layout gains or loses room; widgets re-flow here.</summary>
+        protected virtual void OnResponsive(double extraW, double extraH) { }
+        /// <summary>Centre the body content in the extra room instead of leaving a gap below.</summary>
+        protected void CenterBody(double extraH)
+        {
+            foreach (UIElement e in Body.Children) { var f = e as FrameworkElement; if (f != null) f.VerticalAlignment = extraH > 1 ? VerticalAlignment.Center : VerticalAlignment.Stretch; }
+        }
+
+        internal void SetCustomSize(double w, double h, bool save = true)
+        {
+            if (!ScalesContent || double.IsNaN(baseW) || double.IsNaN(baseH)) return;
+            State.Scale = 1;
+            State.CustomW = Math.Round(Math.Max(baseW * MinScale, Math.Min(baseW * MaxSizeFactor, w)), 1);
+            State.CustomH = Math.Round(Math.Max(baseH * MinScale, Math.Min(baseH * MaxSizeFactor, h)), 1);
+            if (Math.Abs(State.CustomW - baseW) < .5 && Math.Abs(State.CustomH - baseH) < .5) { State.CustomW = 0; State.CustomH = 0; }
+            ApplySize();
             if (save) Program.Save();
+        }
+
+        /// <summary>Kept for compatibility: a uniform factor of the default size.</summary>
+        internal void SetScale(double scale, bool save = true)
+        {
+            if (!ScalesContent) return;
+            if (double.IsNaN(baseW) || double.IsNaN(baseH)) { State.Scale = Clamp(scale); return; }
+            if (Math.Abs(scale - 1) < .001) { ResetSize(save); return; }
+            double f = Clamp(scale);
+            State.Scale = 1; State.CustomW = baseW * f; State.CustomH = baseH * f;
+            ApplySize();
+            if (save) Program.Save();
+        }
+
+        /// <summary>恢复默认大小.</summary>
+        internal void ResetSize(bool save = true)
+        {
+            State.Scale = 1; State.CustomW = 0; State.CustomH = 0;
+            ApplySize();
+            if (save) Program.Save();
+        }
+
+        Border MakeGrip(bool x, bool y)
+        {
+            var g = new Border { Background = Brushes.Transparent, Opacity = x && y ? 0 : 1 };
+            if (x && y)
+            {
+                g.Width = 20; g.Height = 20; g.HorizontalAlignment = HorizontalAlignment.Right; g.VerticalAlignment = VerticalAlignment.Bottom;
+                g.Margin = new Thickness(0, 0, 5, 5); g.Cursor = Cursors.SizeNWSE; g.ToolTip = "拖动自由调整宽高（右键可恢复默认大小）";
+                g.Child = new System.Windows.Shapes.Path { Data = Geometry.Parse("M 15,5 L 5,15 M 15,10 L 10,15"), Stroke = new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)), StrokeThickness = 1.4, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
+            }
+            else if (x) { g.Width = 7; g.HorizontalAlignment = HorizontalAlignment.Right; g.Margin = new Thickness(0, 22, 0, 26); g.Cursor = Cursors.SizeWE; }
+            else { g.Height = 7; g.VerticalAlignment = VerticalAlignment.Bottom; g.Margin = new Thickness(22, 0, 26, 0); g.Cursor = Cursors.SizeNS; }
+            Panel.SetZIndex(g, 95);
+            System.Drawing.Point start = System.Drawing.Point.Empty; double w0 = 0, h0 = 0; bool active = false;
+            g.MouseLeftButtonDown += delegate (object sender, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                if (State.Locked || State.Collapsed) return;
+                start = System.Windows.Forms.Cursor.Position; w0 = base.Width; h0 = base.Height;
+                active = resizing = g.CaptureMouse();
+            };
+            g.MouseMove += delegate (object sender, MouseEventArgs e)
+            {
+                if (!active) return;
+                if (e.LeftButton != MouseButtonState.Pressed) { active = resizing = false; g.ReleaseMouseCapture(); Program.Save(); GuideOverlay.Hide(); return; }
+                var dpi = VisualTreeHelper.GetDpi(this); var now = System.Windows.Forms.Cursor.Position;
+                double w = x ? w0 + (now.X - start.X) / dpi.DpiScaleX : w0, h = y ? h0 + (now.Y - start.Y) / dpi.DpiScaleY : h0;
+                w = Math.Max(baseW * MinScale, Math.Min(baseW * MaxSizeFactor, w)); h = Math.Max(baseH * MinScale, Math.Min(baseH * MaxSizeFactor, h));
+                if (Program.S.Magnet && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
+                {
+                    var r = MagnetSnap.SnapResize(new Rect(Left, Top, w, h), Program.SnapTargets(this), CursorInfo.Areas(this), MagnetSnap.Threshold, x, y);
+                    if (x && r.SnappedX) w = r.X - Left;
+                    if (y && r.SnappedY) h = r.Y - Top;
+                    GuideOverlay.Show(r.Guides);
+                }
+                else GuideOverlay.Hide();
+                SetCustomSize(w, h, false);
+                e.Handled = true;
+            };
+            g.MouseLeftButtonUp += delegate (object sender, MouseButtonEventArgs e) { if (active) { active = resizing = false; g.ReleaseMouseCapture(); Program.Save(); } GuideOverlay.Hide(); e.Handled = true; };
+            g.LostMouseCapture += delegate { if (active) { active = resizing = false; Program.Save(); } GuideOverlay.Hide(); };
+            Root.Children.Add(g);
+            return g;
         }
 
         void AddScaleGrip()
         {
-            scaleGrip = new Border
+            rightGrip = MakeGrip(true, false); bottomGrip = MakeGrip(false, true); cornerGrip = MakeGrip(true, true);
+            Action sync = delegate
             {
-                Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, 5, 5), Background = Brushes.Transparent, Cursor = Cursors.SizeNWSE, Opacity = 0,
-                ToolTip = "拖动调整大小（内容按比例缩放）",
-                Child = new System.Windows.Shapes.Path { Data = Geometry.Parse("M 15,5 L 5,15 M 15,10 L 10,15"), Stroke = new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)), StrokeThickness = 1.4, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round }
+                var v = State.Locked || State.Collapsed ? Visibility.Collapsed : Visibility.Visible;
+                rightGrip.Visibility = v; bottomGrip.Visibility = v; cornerGrip.Visibility = v;
             };
-            Panel.SetZIndex(scaleGrip, 95);
-            System.Drawing.Point start = System.Drawing.Point.Empty; double startScale = 1; bool resizing = false;
-            scaleGrip.MouseLeftButtonDown += delegate (object sender, MouseButtonEventArgs e)
-            {
-                e.Handled = true;
-                if (State.Locked || State.Collapsed) return;
-                start = System.Windows.Forms.Cursor.Position; startScale = ContentScale; resizing = scaleGrip.CaptureMouse();
-            };
-            scaleGrip.MouseMove += delegate (object sender, MouseEventArgs e)
-            {
-                if (!resizing) return;
-                if (e.LeftButton != MouseButtonState.Pressed) { resizing = false; scaleGrip.ReleaseMouseCapture(); Program.Save(); return; }
-                var dpi = VisualTreeHelper.GetDpi(this); var now = System.Windows.Forms.Cursor.Position;
-                double w0 = Math.Max(1, baseW * startScale), h0 = Math.Max(1, baseH * startScale);
-                double fx = (w0 + (now.X - start.X) / dpi.DpiScaleX) / w0, fy = (h0 + (now.Y - start.Y) / dpi.DpiScaleY) / h0;
-                double next = Clamp(startScale * (Math.Abs(fx - 1) > Math.Abs(fy - 1) ? fx : fy));
-                if (Program.S.Magnet && (Keyboard.Modifiers & ModifierKeys.Alt) == 0 && !double.IsNaN(baseW) && !double.IsNaN(baseH))
-                {
-                    var r = MagnetSnap.SnapResize(new Rect(Left, Top, baseW * next, baseH * next), Program.SnapTargets(this), CursorInfo.Areas(this), MagnetSnap.Threshold);
-                    // proportional: follow whichever edge snapped, show only that axis's guides
-                    if (r.SnappedX) next = Clamp((r.X - Left) / baseW);
-                    else if (r.SnappedY) next = Clamp((r.Y - Top) / baseH);
-                    var fin = MagnetSnap.SnapResize(new Rect(Left, Top, baseW * next, baseH * next), Program.SnapTargets(this), CursorInfo.Areas(this), .75);
-                    GuideOverlay.Show(fin.Guides);
-                }
-                else GuideOverlay.Hide();
-                SetScale(next, false);
-                e.Handled = true;
-            };
-            scaleGrip.MouseLeftButtonUp += delegate (object sender, MouseButtonEventArgs e) { if (resizing) { resizing = false; scaleGrip.ReleaseMouseCapture(); Program.Save(); } GuideOverlay.Hide(); e.Handled = true; };
-            scaleGrip.LostMouseCapture += delegate { if (resizing) { resizing = false; Program.Save(); } GuideOverlay.Hide(); };
-            MouseEnter += delegate { if (!State.Locked && !State.Collapsed) Fade(scaleGrip, .85, 160); };
-            MouseLeave += delegate { if (!resizing) Fade(scaleGrip, 0, 220); };
-            Root.Children.Add(scaleGrip);
+            MouseEnter += delegate { sync(); if (!State.Locked && !State.Collapsed) Fade(cornerGrip, .85, 160); };
+            MouseLeave += delegate { if (!resizing) Fade(cornerGrip, 0, 220); };
         }
         public string ExportName
         {
@@ -169,7 +250,7 @@ namespace ClearDesk
             {
                 scaler = new ScaleTransform(1, 1);
                 Frame.LayoutTransform = scaler;
-                SetScale(State.Scale, false);
+                ApplySize();
             }
             if (!plain || state.MaterialSelected)
             {
@@ -202,6 +283,7 @@ namespace ClearDesk
             Heading = Program.Text(title, 13);
             Heading.FontWeight = FontWeights.SemiBold;
             Header.Children.Add(Heading);
+            DockPanel.SetDock(Header, Dock.Top);
             Layout.Children.Add(Header);
             Layout.Children.Add(Body);
             Header.ToolTip = "拖动标题栏或组件空白区域移动；锁定后不可移动";
@@ -297,7 +379,8 @@ namespace ClearDesk
         protected virtual void SetCollapsed()
         {
             Body.Visibility = State.Collapsed ? Visibility.Collapsed : Visibility.Visible;
-            Height = State.Collapsed ? 64 : State.Height;
+            if (ScalesContent) { collapsedApplied = true; if (!State.Collapsed && State.Height > 0) baseH = State.Height; ApplySize(); }
+            else Height = State.Collapsed ? 64 : State.Height;
         }
 
         protected MenuItem Item(string text, Action action, bool check = false)
@@ -345,19 +428,13 @@ namespace ClearDesk
             }));
             if (ScalesContent)
             {
-                var size = new MenuItem { Header = "调整大小", Tag = "size" };
-                foreach (var pct in new[] { 75, 100, 125, 150, 175, 200 })
+                var size = new MenuItem { Header = "恢复默认大小", Tag = "size" };
+                size.Click += delegate { if (!State.Locked) ResetSize(); };
+                c.Opened += delegate
                 {
-                    double v = pct / 100.0;
-                    size.Items.Add(Item(pct == 100 ? "100%（默认）" : pct + "%", delegate { if (!State.Locked) SetScale(v); }));
-                }
-                size.Items.Add(Item("提示：拖动右下角可自由缩放", delegate { }));
-                ((MenuItem)size.Items[size.Items.Count - 1]).IsEnabled = false;
-                size.SubmenuOpened += delegate
-                {
-                    for (int i = 0; i < 6; i++) ((MenuItem)size.Items[i]).IsChecked = Math.Abs(ContentScale * 100 - new[] { 75, 100, 125, 150, 175, 200 }[i]) < .6;
+                    size.IsEnabled = !State.Locked && HasCustomSize;
+                    size.ToolTip = State.Locked ? "已锁定，解锁后可调整大小" : HasCustomSize ? "回到默认宽高" : "拖动边缘或右下角可自由调整宽高";
                 };
-                c.Opened += delegate { size.IsEnabled = !State.Locked && !State.Collapsed; size.ToolTip = State.Locked ? "已锁定，解锁后可调整大小" : null; };
                 c.Items.Add(size);
             }
             lockItem = new MenuItem { Tag = "lock", StaysOpenOnClick = false };
@@ -598,6 +675,7 @@ namespace ClearDesk
             s.Children.Add(t);
             s.Children.Add(d);
             c.Children.Add(s);
+            c.HorizontalAlignment = HorizontalAlignment.Center;
             Body.Children.Add(c);
             Tick(10000, delegate
             {
@@ -611,6 +689,7 @@ namespace ClearDesk
                     d.Text = cdate;
             });
         }
+        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); }
     }
 
     public class PerformanceWindow : GlassWindow
@@ -772,6 +851,7 @@ namespace ClearDesk
         DateTime date = DateTime.Today;
         StackPanel panel = new StackPanel();
         bool almanac;
+        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); }
         public CalendarWindow(bool isAlmanac) : base(Program.Widget(isAlmanac ? "almanac" : "calendar", SystemParameters.WorkArea.Right - 370, isAlmanac ? 550 : 420, 350, isAlmanac ? 350 : 350), isAlmanac ? "黄历" : "日历")
         {
             almanac = isAlmanac;
@@ -892,12 +972,39 @@ namespace ClearDesk
         WeatherReading lastReading;
         bool busy;
         DateTime retryAfter;
+        readonly System.Windows.Controls.Primitives.UniformGrid forecast=new System.Windows.Controls.Primitives.UniformGrid { Rows=1 };
+        int forecastDays;
+        /// <summary>How many forecast days fit: none at the default height, up to 7 when wider/taller.</summary>
+        internal static int ForecastFor(double extraW,double extraH) { return extraH<70 ? 0 : Math.Max(3,Math.Min(7,(int)((300+extraW)/60))); }
+        internal int TestForecastDays { get { return forecastDays; } }
+        protected override void OnResponsive(double extraW,double extraH)
+        {
+            int n=ForecastFor(extraW,extraH); if(n==forecastDays) return; forecastDays=n; RenderForecast();
+        }
+        void RenderForecast()
+        {
+            forecast.Children.Clear();
+            var days=lastReading==null?null:lastReading.Days;
+            int n=days==null?0:Math.Min(forecastDays,days.Count);
+            forecast.Visibility=n>0?Visibility.Visible:Visibility.Collapsed; forecast.Columns=Math.Max(1,n);
+            for(int i=0;i<n;i++)
+            {
+                var d=days[i]; var cell=new StackPanel { Margin=new Thickness(2,0,2,0) };
+                var name=Program.Text(i==0?"今天":"周"+"日一二三四五六"[(int)d.Date.DayOfWeek],11,"#C8D4E2"); name.HorizontalAlignment=HorizontalAlignment.Center;
+                var desc=Program.Text(Description(d.Code),12); desc.HorizontalAlignment=HorizontalAlignment.Center; desc.Margin=new Thickness(0,3,0,2);
+                var range=Program.Text(d.Max.ToString("0")+"° / "+d.Min.ToString("0")+"°",11,"#A8B7C9"); range.HorizontalAlignment=HorizontalAlignment.Center;
+                cell.Children.Add(name); cell.Children.Add(desc); cell.Children.Add(range);
+                forecast.Children.Add(new Border { CornerRadius=new CornerRadius(10),Padding=new Thickness(2,6,2,6),Margin=new Thickness(2,0,2,0),Background=new SolidColorBrush(Color.FromArgb(18,255,255,255)),Child=cell });
+            }
+        }
+        internal void TestShowReading(WeatherReading r) { lastReading=r; RenderForecast(); }
         public WeatherWindow() : this(WeatherService.Shared) { }
         internal WeatherWindow(IWeatherService service) : base(Program.Widget("weather", SystemParameters.WorkArea.Right - 370, 420, 350, 250), "天气")
         {
             weather=service;
             var p=new StackPanel(); p.Children.Add(temp); p.Children.Add(description);
             detail.Margin=new Thickness(0,10,0,8); p.Children.Add(detail);
+            forecast.Margin=new Thickness(0,0,0,10); forecast.Visibility=Visibility.Collapsed; p.Children.Add(forecast);
             p.Children.Add(Program.Text("天气：Open-Meteo · 定位：IPwho.is",10,"#A8B7C9")); Body.Children.Add(p);
             ContextMenu.Items.Insert(0,Item("重新定位并刷新",delegate { _ = FetchAsync(true); }));
             Tick(60000,delegate { _ = FetchAsync(false); });
@@ -921,6 +1028,7 @@ namespace ClearDesk
                 description.Text=reading.City+" · "+Description(reading.Code);
                 detail.Text="湿度 "+reading.Humidity.ToString("0")+"%  ·  风速 "+reading.Wind.ToString("0.#")+" km/h\n天气时间 "+reading.Time+" · 自动定位（IP）";
                 detail.ToolTip="城市由网络 IP 推断，代理或 VPN 可能影响结果。"; retryAfter=DateTime.UtcNow.AddMinutes(20);
+                RenderForecast();
             }
             catch(Exception error)
             {

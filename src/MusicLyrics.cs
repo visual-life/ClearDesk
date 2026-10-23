@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,20 @@ namespace ClearDesk
         readonly ScrollViewer lyricScroll=new ScrollViewer { VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled };
         readonly StackPanel lyricLines=new StackPanel { VerticalAlignment=VerticalAlignment.Center };
         Border lyricsPanel;
+        int lyricNextCount=1;
+        internal int TestLyricNextLines { get { return lyricNextCount; } }
+        internal double TestLyricsHeight { get { return lyricsPanel==null?0:lyricsPanel.Height; } }
+        // 2.0.7: a taller music widget gives the room to the lyrics card and shows more upcoming lines.
+        protected override void OnResponsive(double extraW,double extraH)
+        {
+            if(lyricsPanel==null) return;
+            double room=Program.S.MusicLyrics?extraH:0;
+            lyricsPanel.Height=126+room;
+            lyricCurrent.MaxHeight=44+Math.Min(room,30);
+            lyricNextCount=1+(int)Math.Max(0,(room-30)/22);
+            lyricNext.MaxHeight=32+Math.Max(0,room-30);
+            if(lyricView!=null) RenderLyrics(lyricView);
+        }
         MenuItem lyricMenu;
         LyricsDocument lyricDocument;
         MusicSnapshot lyricView;
@@ -130,7 +145,9 @@ namespace ClearDesk
             lyricLines.Visibility=Visibility.Visible; lyricScroll.Visibility=Visibility.Collapsed;
             int index=doc.At(view.Position);
             lyricCurrent.Text=index>=0?(string.IsNullOrWhiteSpace(doc.Lines[index].Text)?"♪":doc.Lines[index].Text):"前奏 ♪";
-            lyricNext.Text=index+1<doc.Lines.Count?doc.Lines[index+1].Text:"";
+            var upcoming=new List<string>();
+            for(int k=index+1;k<doc.Lines.Count && upcoming.Count<lyricNextCount;k++) if(!string.IsNullOrWhiteSpace(doc.Lines[k].Text) || upcoming.Count==0) upcoming.Add(doc.Lines[k].Text);
+            lyricNext.Text=string.Join("\n",upcoming);
             lyricCredit.Text=doc.Credit+" · "+(view.Playing?"同步歌词":"已暂停");
         }
         void ImportLyrics()

@@ -23,7 +23,7 @@ namespace ClearDesk
             check(Math.Abs(w.ContentScale - GlassWindow.MinScale) < .001, "scale is clamped to the minimum");
             w.SetScale(1, false); w.UpdateLayout(); await Task.Delay(250);
             check(Math.Abs(w.ActualWidth - aw) < 3, "reset returns to the original size");
-            check(w.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Any(m => Equals(m.Tag, "size")), "widget menu has 调整大小");
+            check(w.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Any(m => Equals(m.Tag, "size")), "widget menu has 恢复默认大小");
             check(!Program.OpenWindows.OfType<OrganizerWindow>().Any(o => o.Scalable) && !Program.OpenWindows.OfType<DockWindow>().Any(d => d.Scalable), "收纳格 / Dock keep their own sizing");
         }
     }

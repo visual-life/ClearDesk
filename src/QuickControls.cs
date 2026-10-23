@@ -352,6 +352,7 @@ namespace ClearDesk
     // ---------------------------------------------------------------- widget
     public class QuickControlWindow : GlassWindow
     {
+        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); }
         OutputVolume volume;
         RadioSwitch wifi, bluetooth;
         Windows.Devices.Enumeration.DeviceWatcher[] btWatchers;
