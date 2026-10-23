@@ -8,7 +8,7 @@ namespace ClearDesk
     // Used as a playback signal when a player's UI stops updating (e.g. NetEase CEF while minimized).
     internal static class AudioPeak
     {
-        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
+        static readonly Type EnumeratorType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"));
         [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         interface IMMDeviceEnumerator
         {
@@ -46,12 +46,16 @@ namespace ClearDesk
         interface IAudioMeterInformation { int GetPeakValue(out float peak); }
 
         // Highest peak (0..1) over all sessions owned by processes with this name; -1 when no session exists.
+        internal static string LastError;
         public static float Peak(string processName)
         {
-            float best = -1;
+            float best = -1; LastError = null;
             try
             {
-                var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+                // Create through the CLSID, not a [ComImport] class: QuickControls declares its own class for the same
+                // CLSID and the CLR then types the RCW as that class, so "new MMDeviceEnumerator()" threw InvalidCast
+                // inside the running app (2.0.4–2.0.7), the peak was always -1 and the NetEase clock never advanced.
+                var enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(EnumeratorType);
                 IMMDevice device; if (enumerator.GetDefaultAudioEndpoint(0, 1, out device) != 0 || device == null) return -1;
                 Guid iid = typeof(IAudioSessionManager2).GUID; object o;
                 if (device.Activate(ref iid, 23, IntPtr.Zero, out o) != 0) return -1;
@@ -68,7 +72,7 @@ namespace ClearDesk
                     else best = Math.Max(best, 0);
                 }
             }
-            catch { }
+            catch (Exception e) { LastError = e.GetType().Name; MusicTrace.Write("peak error " + e.GetType().Name + ": " + e.Message + " apt=" + System.Threading.Thread.CurrentThread.GetApartmentState()); }
             return best;
         }
     }

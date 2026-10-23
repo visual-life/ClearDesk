@@ -16,7 +16,6 @@ namespace ClearDesk
     // ---------------------------------------------------------------- Core Audio (default render endpoint)
     internal static class CoreAudio
     {
-        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorCom { }
         [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")] class PolicyConfigCom { }
 
         [StructLayout(LayoutKind.Sequential)] internal struct PropertyKey { public Guid Format; public int Id; }
@@ -93,7 +92,7 @@ namespace ClearDesk
 
         static readonly PropertyKey FriendlyName = new PropertyKey { Format = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), Id = 14 };
 
-        internal static IMMDeviceEnumerator Enumerator() { return (IMMDeviceEnumerator)new MMDeviceEnumeratorCom(); }
+        internal static IMMDeviceEnumerator Enumerator() { return (IMMDeviceEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))); }
 
         internal static string Name(IMMDevice d)
         {

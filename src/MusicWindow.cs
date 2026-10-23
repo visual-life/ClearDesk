@@ -201,7 +201,7 @@ namespace ClearDesk
         {
             if (closed) return;
             if (selectedSource == "local") { Render(); return; }
-            if (busy || commandBusy || DateTime.UtcNow < retryAfter) return;
+            if (busy || commandBusy || DateTime.UtcNow < retryAfter) { MusicTrace.Write("skip busy=" + busy + " cmd=" + commandBusy); return; }
             busy = true;
             int generation = revision;
             string requested = selectedSource;
@@ -210,6 +210,7 @@ namespace ClearDesk
                 var result = await sessions.ReadAsync(requested);
                 if (closed || generation != revision) return;
                 snapshot = result;
+                MusicTrace.Write("ui key=" + (result.Key != null) + " src=" + result.Source + " pos=" + result.Position + " play=" + result.Playing + " msg=" + result.Message);
                 retryAfter = result.Key == null ? DateTime.UtcNow.AddSeconds(2) : DateTime.MinValue;
                 Render();
             }

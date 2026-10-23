@@ -18,17 +18,19 @@ namespace ClearDesk
         bool staleTimeline, playing, primed;
 
         public bool Estimating { get; private set; }
+        Func<string, string, TimeSpan> lookup;
 
         // peak: current output peak of the client (0..1), or -1 when it has no audio session.
         public void Apply(MusicSnapshot view, bool minimized, Func<float> peak, DateTime now, Func<string, string, TimeSpan> lookupDuration)
         {
+            lookup = lookupDuration;
             string id = view.Title + "\n" + view.Artist;
             if (!primed || id != song)
             {
                 // Song changed. If the timeline did not move with it, the tree is frozen (title comes from
                 // the live window caption): restart from zero and take the duration from the play queue.
                 bool frozen = primed && view.Position == rawPosition && view.Duration == rawDuration && (Estimating || minimized);
-                song = id; primed = true; rawPosition = view.Position; rawDuration = view.Duration; rawAt = last = lastSound = now;
+                song = id; primed = true; rawPosition = view.Position; rawDuration = view.Duration; rawAt = last = now; lastSound = frozen || view.Playing ? now : DateTime.MinValue;
                 staleTimeline = frozen;
                 duration = frozen ? Lookup(lookupDuration, view) : view.Duration;
                 estimate = estimateAtSound = frozen ? TimeSpan.Zero : view.Position;
@@ -65,6 +67,7 @@ namespace ClearDesk
 
         void Publish(MusicSnapshot view)
         {
+            if (duration <= TimeSpan.Zero && lookup != null) duration = Lookup(lookup, view);
             if (duration > TimeSpan.Zero) view.Duration = duration;
             view.Position = view.Duration > TimeSpan.Zero && estimate > view.Duration ? view.Duration : estimate;
             view.Playing = playing;

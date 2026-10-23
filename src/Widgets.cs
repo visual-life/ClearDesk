@@ -355,6 +355,8 @@ namespace ClearDesk
                 if (!Program.Preview)
                     Native.SetLong(h, -20, new IntPtr(Native.GetLong(h, -20).ToInt64() | 0x80));
                 Native.SetWindowPos(h, new IntPtr(Topmost ? -1 : 1), 0, 0, 0, 0, 0x13);
+                var source = HwndSource.FromHwnd(h);
+                if (source != null) source.AddHook(PinHook);
             };
             Closed += delegate
             {
@@ -479,9 +481,38 @@ namespace ClearDesk
             lockItem.Icon = MenuTheme.Glyph(locked ? "\uE72E" : "\uE785", locked ? MenuTheme.LockedAccent : MenuTheme.Text);
         }
 
+        // 2.0.8: a locked widget is pinned to the bottom of the z-order (like desktop icons). Clicking it no
+        // longer raises it above other apps or other widgets; unlocked widgets can still come forward while
+        // being arranged. Dock / 启动台 and topmost widgets are not affected; 定位 (Flash) may raise briefly.
+        bool flashing;
+        internal bool PinnedToBottom { get { return State.Locked && !Topmost && !flashing && !(this is DockWindow) && !(this is LaunchpadWindow); } }
+        protected virtual bool NoActivateWhenLocked { get { return !(this is NoteWindow) && !(this is OrganizerWindow); } }
+        IntPtr PinHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_WINDOWPOSCHANGING = 0x46, WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
+            if (!PinnedToBottom) return IntPtr.Zero;
+            if (msg == WM_MOUSEACTIVATE && NoActivateWhenLocked) { handled = true; return new IntPtr(MA_NOACTIVATE); }
+            if (msg == WM_WINDOWPOSCHANGING)
+            {
+                var pos = (Native.WINDOWPOS_PIN)System.Runtime.InteropServices.Marshal.PtrToStructure(lParam, typeof(Native.WINDOWPOS_PIN));
+                if ((pos.flags & 0x4) == 0) // SWP_NOZORDER not set: a z-order change is requested
+                {
+                    pos.hwndInsertAfter = new IntPtr(1); // HWND_BOTTOM
+                    System.Runtime.InteropServices.Marshal.StructureToPtr(pos, lParam, false);
+                }
+            }
+            return IntPtr.Zero;
+        }
+        internal void SendToBottom()
+        {
+            var h = new WindowInteropHelper(this).Handle;
+            if (h != IntPtr.Zero && PinnedToBottom) Native.SetWindowPos(h, new IntPtr(1), 0, 0, 0, 0, 0x13);
+        }
+
         internal void SetLocked(bool locked)
         {
             State.Locked = locked;
+            if (locked) SendToBottom();
             Program.Save();
             UpdateLockItem();
             Toast(locked ? "\uE72E" : "\uE785", LockStateText(locked));
@@ -498,6 +529,7 @@ namespace ClearDesk
         {
             if (!IsVisible) Show();
             var h = new WindowInteropHelper(this).Handle;
+            flashing = true;
             if (h != IntPtr.Zero) Native.SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x13);
             var original = Frame.BorderBrush; var thickness = Frame.BorderThickness;
             var pulse = new SolidColorBrush(Color.FromArgb(0, 22, 119, 255));
@@ -511,6 +543,7 @@ namespace ClearDesk
             a.Completed += delegate
             {
                 Frame.BorderBrush = original; Frame.BorderThickness = thickness;
+                flashing = false;
                 if (h != IntPtr.Zero && !WasClosed) { Native.SetWindowPos(h, new IntPtr(-2), 0, 0, 0, 0, 0x13); if (!Topmost) Native.SetWindowPos(h, new IntPtr(1), 0, 0, 0, 0, 0x13); }
             };
             pulse.BeginAnimation(SolidColorBrush.ColorProperty, a);

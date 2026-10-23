@@ -47,6 +47,29 @@ namespace ClearDesk
 
         readonly PlaybackEstimator clock = new PlaybackEstimator();
         [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+        delegate bool EnumProc(IntPtr window, IntPtr data);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr data);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr window, out int pid);
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int max);
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern int GetClassName(IntPtr window, System.Text.StringBuilder text, int max);
+
+        static IntPtr HiddenWindow(int processId, out string caption)
+        {
+            IntPtr found = IntPtr.Zero; string text = "";
+            EnumWindows((w, d) =>
+            {
+                int pid; GetWindowThreadProcessId(w, out pid);
+                if (pid != processId) return true;
+                var b = new System.Text.StringBuilder(512); GetWindowText(w, b, 512);
+                string t, a; if (!ParseTitle(b.ToString(), out t, out a)) return true;
+                var c = new System.Text.StringBuilder(128); GetClassName(w, c, 128);
+                if (c.ToString().IndexOf("Orpheus", StringComparison.OrdinalIgnoreCase) < 0 && found != IntPtr.Zero) return true;
+                found = w; text = b.ToString();
+                return c.ToString().IndexOf("Orpheus", StringComparison.OrdinalIgnoreCase) < 0;
+            }, IntPtr.Zero);
+            caption = text; return found;
+        }
 
         sealed class Target
         {
@@ -69,8 +92,11 @@ namespace ClearDesk
                     try
                     {
                         IntPtr handle = process.MainWindowHandle;
-                        string title, artist;
-                        if (handle == IntPtr.Zero || !ParseTitle(process.MainWindowTitle, out title, out artist)) continue;
+                        string caption = process.MainWindowTitle, title, artist;
+                        // Closed to the tray: the main window is hidden, so MainWindowHandle is 0. Its caption
+                        // still carries "title - artist"; look the hidden top-level window up directly.
+                        if (handle == IntPtr.Zero || !ParseTitle(caption, out title, out artist)) handle = HiddenWindow(process.Id, out caption);
+                        if (handle == IntPtr.Zero || !ParseTitle(caption, out title, out artist)) continue;
                         var root = ui.Window(handle);
                         var play = ui.FindPlayback(root);
                         if (play == null)
@@ -127,7 +153,9 @@ namespace ClearDesk
                         if (ReadTimeline(times, view)) break;
                     }
                     // Minimized CEF freezes the tree; keep the clock running from the client's audio output.
-                    clock.Apply(view, IsIconic(target.Window), () => AudioPeak.Peak("cloudmusic"), DateTime.UtcNow, PlaybackEstimator.QueueDuration);
+                    var rawPos = view.Position; float seen = -2; bool iconic = IsIconic(target.Window) || !IsWindowVisible(target.Window);
+                    clock.Apply(view, iconic, () => seen = AudioPeak.Peak("cloudmusic"), DateTime.UtcNow, PlaybackEstimator.QueueDuration);
+                    MusicTrace.Write("ne iconic=" + iconic + " raw=" + rawPos + " rawPlay=" + (MusicAccessibility.Name(target.Play)) + " peak=" + seen + " pub=" + view.Position + " play=" + view.Playing + " est=" + clock.Estimating);
                     return view;
                 }
             }, (MusicSnapshot)null);

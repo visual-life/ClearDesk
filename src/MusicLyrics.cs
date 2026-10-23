@@ -22,15 +22,32 @@ namespace ClearDesk
         int lyricNextCount=1;
         internal int TestLyricNextLines { get { return lyricNextCount; } }
         internal double TestLyricsHeight { get { return lyricsPanel==null?0:lyricsPanel.Height; } }
-        // 2.0.7: a taller music widget gives the room to the lyrics card and shows more upcoming lines.
+        // 2.0.8: a larger music widget gives the room to the lyrics card: the lyric font grows with the
+        // extra height (capped by the available width so lines don't wrap into fragments), and the
+        // remaining height is filled with as many upcoming lines as fit.
+        internal double LyricFontScale { get; private set; }
+        internal static double LyricScale(double room,double extraW)
+        {
+            if(room<1) return 1;
+            double width=Math.Max(0,280+extraW);
+            return Math.Max(1,Math.Min(2.4,Math.Min(1+room/160,width/280*1.5)));
+        }
         protected override void OnResponsive(double extraW,double extraH)
         {
             if(lyricsPanel==null) return;
-            double room=Program.S.MusicLyrics?extraH:0;
+            double room=Program.S.MusicLyrics?extraH:0, k=LyricScale(room,extraW);
+            LyricFontScale=k;
             lyricsPanel.Height=126+room;
-            lyricCurrent.MaxHeight=44+Math.Min(room,30);
-            lyricNextCount=1+(int)Math.Max(0,(room-30)/22);
-            lyricNext.MaxHeight=32+Math.Max(0,room-30);
+            lyricCurrent.FontSize=14*k; lyricNext.FontSize=11*k; lyricPlain.FontSize=13*k; lyricCredit.FontSize=Math.Min(12,9*Math.Sqrt(k));
+            if(room<1) { lyricCurrent.MaxHeight=44; lyricNext.MaxHeight=32; lyricNextCount=1; }
+            else
+            {
+                double inner=126+room-20-lyricCredit.FontSize*1.4-7;
+                lyricCurrent.MaxHeight=Math.Max(44,14*k*1.4*2+2);
+                double rest=Math.Max(0,inner-lyricCurrent.MaxHeight-6);
+                lyricNext.MaxHeight=Math.Max(32,rest);
+                lyricNextCount=Math.Max(1,(int)(rest/(11*k*1.4)));
+            }
             if(lyricView!=null) RenderLyrics(lyricView);
         }
         MenuItem lyricMenu;

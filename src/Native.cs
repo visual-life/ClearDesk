@@ -92,6 +92,8 @@ namespace ClearDesk
         public static extern IntPtr SetLong(IntPtr h, int i, IntPtr value);
         [DllImport("user32.dll")]
         public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINDOWPOS_PIN { public IntPtr hwnd, hwndInsertAfter; public int x, y, cx, cy; public uint flags; }
         [DllImport("user32.dll")]
         public static extern IntPtr SetWindowsHookEx(int id, MouseProc proc, IntPtr module, uint tid);
         [DllImport("user32.dll")]
