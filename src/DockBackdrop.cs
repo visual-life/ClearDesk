@@ -45,6 +45,7 @@ namespace ClearDesk
         Native.RECT last;
         float lastRadius;
         bool shown, disposed;
+        public float Radius = 25;
         public bool Enabled { get; private set; }
         public IntPtr Handle { get { return source == null ? IntPtr.Zero : source.Handle; } }
 
@@ -123,7 +124,7 @@ namespace ClearDesk
             }
             int x = (int)Math.Round(bounds.X), y = (int)Math.Round(bounds.Y);
             int width = Math.Max(1, (int)Math.Round(bounds.Width)), height = Math.Max(1, (int)Math.Round(bounds.Height));
-            float radius = (float)(25 * scale);
+            float radius = (float)(Radius * scale);
             bool sizeChanged = last.R - last.L != width || last.B - last.T != height || radius != lastRadius;
             if (sizeChanged)
             {

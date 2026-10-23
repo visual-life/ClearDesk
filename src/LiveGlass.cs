@@ -31,6 +31,8 @@ namespace ClearDesk
         Border washLayer, edge;
         string material;
         FrostedBackdrop backdrop;
+        LiveBehind live;
+        internal bool LiveEnabled { get { return live != null && live.Enabled; } }
         readonly bool wallpaperFrost;
         readonly RadialGradientBrush light;
         Point target = new Point(.5, .1), current = new Point(.5, .1);
@@ -77,6 +79,7 @@ namespace ClearDesk
                     backdrop.Dispose();
                     backdrop = null;
                 }
+                if (live != null) { live.Dispose(); live = null; }
             };
             SetMaterial(material);
         }
@@ -85,15 +88,22 @@ namespace ClearDesk
         {
             material = value;
             bool frosted = value == "frosted";
-            if (frosted && wallpaperFrost && IsLoaded && backdrop == null)
+            bool liveMode = frosted && wallpaperFrost && Program.S != null && Program.S.LiveDesktopBlur && !Program.Rendering;
+            if (liveMode && IsLoaded && live == null)
+            {
+                live = new LiveBehind(this);
+                if (!live.Enabled) { live.Dispose(); live = null; liveMode = false; }
+            }
+            if (!liveMode && live != null) { live.Dispose(); live = null; }
+            if (frosted && wallpaperFrost && !liveMode && IsLoaded && backdrop == null)
                 backdrop = new FrostedBackdrop(this);
-            if (!frosted && backdrop != null)
+            if ((!frosted || liveMode) && backdrop != null)
             {
                 backdrop.Dispose();
                 backdrop = null;
             }
 
-            bool native = frosted && (!wallpaperFrost || (backdrop != null && backdrop.Enabled));
+            bool native = frosted && (!wallpaperFrost || (backdrop != null && backdrop.Enabled) || (live != null && live.Enabled));
             tint.Background = new SolidColorBrush(Color.FromArgb((byte)(frosted ? (native ? 38 : 235) : 38), 24, 23, 24));
             if (washLayer != null)
                 washLayer.Opacity = frosted ? .12 : 1;

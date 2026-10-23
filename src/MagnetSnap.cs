@@ -110,6 +110,50 @@ namespace ClearDesk
             return best;
         }
 
+        // Resizing from the bottom-right: snaps the right / bottom edge to other widgets' edges and
+        // centres, screen / work-area edges, and to the same width / height as another widget.
+        // X / Y of the result are the new Right / Bottom.
+        public static SnapResult SnapResize(Rect m, IList<Rect> others, IList<Rect> areas, double threshold, bool snapX = true, bool snapY = true)
+        {
+            var res = new SnapResult { X = m.Right, Y = m.Bottom };
+            foreach (bool x in new[] { true, false })
+            {
+                if (x ? !snapX : !snapY) continue;
+                double edge = x ? m.Right : m.Bottom, start = x ? m.Left : m.Top;
+                double best = threshold + .001, line = 0; Rect refRect = Rect.Empty; int kind = -1;
+                Action<double, Rect, int> offer = (v, r, k) => { double d = Math.Abs(v - edge); if (v > start + 40 && d < best) { best = d; line = v; refRect = r; kind = k; } };
+                foreach (var o in others)
+                {
+                    for (int i = 0; i < 3; i++) offer(A(o, i, x), o, 0);
+                    offer(start + (x ? o.Width : o.Height), o, 3); // same size
+                }
+                foreach (var a in areas) { offer(x ? a.Right : a.Bottom, a, 1); offer(x ? a.Left + a.Width / 2 : a.Top + a.Height / 2, a, 1); }
+                if (kind < 0) continue;
+                if (x) { res.X = line; res.SnappedX = true; } else { res.Y = line; res.SnappedY = true; }
+                var mm = x ? new Rect(m.Left, m.Top, Math.Max(0, line - m.Left), m.Height) : new Rect(m.Left, m.Top, m.Width, Math.Max(0, line - m.Top));
+                if (kind == 3)
+                {
+                    // equal size: dashed dimension lines under/along both widgets
+                    if (x)
+                    {
+                        res.Guides.Add(new SnapGuide { A = new Point(mm.Left, mm.Bottom + 6), B = new Point(mm.Right, mm.Bottom + 6), Gap = true });
+                        res.Guides.Add(new SnapGuide { A = new Point(refRect.Left, refRect.Bottom + 6), B = new Point(refRect.Right, refRect.Bottom + 6), Gap = true });
+                    }
+                    else
+                    {
+                        res.Guides.Add(new SnapGuide { A = new Point(mm.Right + 6, mm.Top), B = new Point(mm.Right + 6, mm.Bottom), Gap = true });
+                        res.Guides.Add(new SnapGuide { A = new Point(refRect.Right + 6, refRect.Top), B = new Point(refRect.Right + 6, refRect.Bottom), Gap = true });
+                    }
+                }
+                else
+                {
+                    var span = kind == 1 ? mm : Rect.Union(mm, refRect);
+                    res.Guides.Add(x ? new SnapGuide { A = new Point(line, span.Top), B = new Point(line, span.Bottom) } : new SnapGuide { A = new Point(span.Left, line), B = new Point(span.Right, line) });
+                }
+            }
+            return res;
+        }
+
         static IEnumerable<SnapGuide> Guides(Candidate c, Rect m, bool x)
         {
             if (c.Kind == 2)

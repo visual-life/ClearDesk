@@ -52,9 +52,9 @@ namespace ClearDesk
                 window.TestSelect(2); window.UpdateLayout();
                 var toggle=Children<CheckBox>(window).Single(c=>AutomationProperties.GetName(c)=="显示 Dock 栏"); toggle.IsChecked=!oldDock; toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 check(Program.S.Dock==!oldDock,"Dock switch retains the original configuration behavior");
-                var slider=Children<Slider>(window).Single(); slider.Value=57;
+                var slider=Children<Slider>(window).Single(s=>AutomationProperties.GetName(s)=="图标大小"); slider.Value=57;
                 window.TestSelect(0); window.TestSelect(2); window.UpdateLayout();
-                check(Program.S.DockSize==57 && Children<Slider>(window).Single().Value==57,"changing categories preserves the edited Dock slider value");
+                check(Program.S.DockSize==57 && Children<Slider>(window).Single(s=>AutomationProperties.GetName(s)=="图标大小").Value==57,"changing categories preserves the edited Dock slider value");
                 window.Width=840; window.Height=570; window.TestSelect(4); window.UpdateLayout(); await Task.Delay(60);
                 var main=Children<ScrollViewer>(window).First();
                 check(main.ScrollableWidth==0 && Children<Button>(window).Where(b=>(b.Content as string)=="应用设置").Single().ActualWidth>70,"minimum settings size keeps apply action usable without horizontal scrolling");

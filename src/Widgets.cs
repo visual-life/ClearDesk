@@ -101,11 +101,22 @@ namespace ClearDesk
                 var dpi = VisualTreeHelper.GetDpi(this); var now = System.Windows.Forms.Cursor.Position;
                 double w0 = Math.Max(1, baseW * startScale), h0 = Math.Max(1, baseH * startScale);
                 double fx = (w0 + (now.X - start.X) / dpi.DpiScaleX) / w0, fy = (h0 + (now.Y - start.Y) / dpi.DpiScaleY) / h0;
-                SetScale(startScale * (Math.Abs(fx - 1) > Math.Abs(fy - 1) ? fx : fy), false);
+                double next = Clamp(startScale * (Math.Abs(fx - 1) > Math.Abs(fy - 1) ? fx : fy));
+                if (Program.S.Magnet && (Keyboard.Modifiers & ModifierKeys.Alt) == 0 && !double.IsNaN(baseW) && !double.IsNaN(baseH))
+                {
+                    var r = MagnetSnap.SnapResize(new Rect(Left, Top, baseW * next, baseH * next), Program.SnapTargets(this), CursorInfo.Areas(this), MagnetSnap.Threshold);
+                    // proportional: follow whichever edge snapped, show only that axis's guides
+                    if (r.SnappedX) next = Clamp((r.X - Left) / baseW);
+                    else if (r.SnappedY) next = Clamp((r.Y - Top) / baseH);
+                    var fin = MagnetSnap.SnapResize(new Rect(Left, Top, baseW * next, baseH * next), Program.SnapTargets(this), CursorInfo.Areas(this), .75);
+                    GuideOverlay.Show(fin.Guides);
+                }
+                else GuideOverlay.Hide();
+                SetScale(next, false);
                 e.Handled = true;
             };
-            scaleGrip.MouseLeftButtonUp += delegate (object sender, MouseButtonEventArgs e) { if (resizing) { resizing = false; scaleGrip.ReleaseMouseCapture(); Program.Save(); } e.Handled = true; };
-            scaleGrip.LostMouseCapture += delegate { if (resizing) { resizing = false; Program.Save(); } };
+            scaleGrip.MouseLeftButtonUp += delegate (object sender, MouseButtonEventArgs e) { if (resizing) { resizing = false; scaleGrip.ReleaseMouseCapture(); Program.Save(); } GuideOverlay.Hide(); e.Handled = true; };
+            scaleGrip.LostMouseCapture += delegate { if (resizing) { resizing = false; Program.Save(); } GuideOverlay.Hide(); };
             MouseEnter += delegate { if (!State.Locked && !State.Collapsed) Fade(scaleGrip, .85, 160); };
             MouseLeave += delegate { if (!resizing) Fade(scaleGrip, 0, 220); };
             Root.Children.Add(scaleGrip);

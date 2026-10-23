@@ -165,7 +165,7 @@ namespace ClearDesk
             {
                 string text = e.Data.Text ?? "";
                 return "永久删除这张便签？\n\n" + (string.IsNullOrWhiteSpace(text) ? "这张便签是空白的。" :
-                    "便签中的全部文字（" + e.Detail + "，开头为“" + NotePreview(text) + "”）将被删除，无法恢复。") + "\n颜色、位置和尺寸也会一并清除。" + tail;
+                    "便签中的全部文字（" + e.Detail + "，开头为“" + NotePreview(text) + "”）将被删除，无法恢复。") + (e.Data.Images != null && e.Data.Images.Count > 0 ? "\n其中的 " + e.Data.Images.Count + " 张图片也会一并删除。" : "") + "\n颜色、位置和尺寸也会一并清除。" + tail;
             }
             if (e.Kind == "box")
             {
@@ -185,7 +185,7 @@ namespace ClearDesk
             {
                 var note = w as NoteWindow;
                 if (note != null) note.Delete(false);
-                else { Program.S.Notes.Remove(e.Data); Program.Save(); }
+                else { Program.S.Notes.Remove(e.Data); NoteWindow.DeleteImages(e.Data); Program.Save(); }
             }
             else if (e.Kind == "box")
             {

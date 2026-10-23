@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.5";
+        internal const string Version = "2.0.6";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -172,6 +172,7 @@ namespace ClearDesk
             g=AddGroup(2,"Dock 与启动台");
             Toggle(g,"显示 Dock 栏","固定常用应用，查看正在运行的程序。",state.Dock,v => state.Dock=v);
             Range(g,"图标大小","调整 Dock 的基础图标尺寸。",32,72,state.DockSize," px",v => state.DockSize=v);
+            Range(g,"距屏幕底部距离","调整 Dock 与屏幕底边的距离，实时生效；自动隐藏和遮挡判断按新位置计算。",0,300,(int)Math.Round(state.DockOffset)," px",v => { state.DockOffset=v; Program.RefreshDockOffset(); });
             Toggle(g,"窗口遮挡时自动隐藏","其他应用的窗口挡住 Dock 时，Dock 向下滑出屏幕；鼠标移到屏幕底部边缘即可唤出，遮挡结束后自动回来。",state.DockAutoHide,v => { state.DockAutoHide=v; Program.RefreshDockAutoHide(); });
             Row(g,"桌面启动台","快速查找并打开桌面项目。",ActionButton("打开启动台",Program.Launchpad));
             var launchpad=Program.Widget("launchpad",0,0,880,520);
@@ -187,6 +188,7 @@ namespace ClearDesk
             g=AddGroup(4,"Dock 材质");
             var dock=Program.Widget("dock",0,0,620,140);
             Choice(g,"背景材质","图标保持清晰；磨砂实时模糊后方窗口。",new[]{"玻璃 · 实时清透","磨砂 · 实时模糊"},dock.Material=="frosted"?1:0,i => { dock.Material=i==1?"frosted":"liquid"; dock.MaterialSelected=true; });
+            Toggle(g,"动态壁纸实时模糊","默认关闭。开启后“磨砂”材质的组件改为实时模糊身后的真实画面（支持 Wallpaper Engine 等动态壁纸和窗口），由系统合成器（DWM）用显卡完成，会略增加 GPU 占用；关闭时只模糊静态壁纸图片。",state.LiveDesktopBlur,v => { state.LiveDesktopBlur=v; Program.Save(); if (!Program.Preview) Program.Rebuild(); });
             Row(g,"组件材质","右键各桌面组件可独立选择材质、调整大小、锁定位置、新建组件或恢复位置；悬停时拖动右下角也可缩放。");
             g=AddGroup(4,"桌面组件");
             Toggle(g,"时钟","时间与日期。",state.Clock,v=>state.Clock=v);

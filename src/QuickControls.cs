@@ -406,7 +406,7 @@ namespace ClearDesk
             tiles.ColumnDefinitions.Add(new ColumnDefinition()); tiles.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) }); tiles.ColumnDefinitions.Add(new ColumnDefinition());
             wifiTile = Tile("\uE701", "WLAN", out wifiIcon, out wifiTitle, out wifiStatus,
                 async delegate { await ToggleRadio(wifi, "WLAN"); },
-                delegate { Open(wifi != null && wifi.View == RadioView.Denied ? "ms-settings:privacy-radios" : "ms-settings:network-wifi"); },
+                delegate { if (wifi != null && wifi.View == RadioView.Denied) Open("ms-settings:privacy-radios"); else OpenWifiFlyout(); },
                 null);
             TextBlock btTitle;
             btTile = Tile("\uE702", "蓝牙", out btIcon, out btTitle, out btStatus,
@@ -521,8 +521,19 @@ namespace ClearDesk
             return b;
         }
 
+        // Win11 quick-settings WLAN list (the flyout with 断开连接 / 更多 Wi-Fi 设置). Launched through
+        // explorer so the shell owns the activation; a direct ShellExecute from our process is
+        // silently ignored on 24H2+. Falls back to the WLAN settings page.
+        internal static void OpenWifiFlyout()
+        {
+            if (Program.Rendering) return;
+            try { Process.Start(new ProcessStartInfo(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "ms-availablenetworks:") { UseShellExecute = false }); }
+            catch (Exception e) { Program.Log(e); Open("ms-settings:network-wifi"); }
+        }
+
         internal static void Open(string uri)
         {
+            if (uri == "ms-availablenetworks:") { OpenWifiFlyout(); return; }
             if (Program.Rendering) return;
             try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); }
             catch (Exception e) { Program.Log(e); }

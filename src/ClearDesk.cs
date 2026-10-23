@@ -24,9 +24,16 @@ namespace ClearDesk
         public bool Locked = false, Collapsed = false, List = false, Desktop = false, Enabled = true;
         public string Material = "liquid";
         public double Scale = 1;
+        public List<NoteImage> Images = new List<NoteImage>();
         public string Text = "", NoteColor = "amber";
         public List<string> Items = new List<string>();
         public List<string> Excluded = new List<string>();
+    }
+
+    public class NoteImage
+    {
+        public string File = "";
+        public double Scale = 1;
     }
 
     public class Settings
@@ -35,7 +42,7 @@ namespace ClearDesk
         public int ConfigVersion = 1;
         public bool GpuRendering = false;
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
-        public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false;
+        public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false, LiveDesktopBlur = false;
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
@@ -61,6 +68,7 @@ namespace ClearDesk
         static Forms.NotifyIcon tray;
         static Window settings;
         static List<GlassWindow> windows = new List<GlassWindow>();
+        internal static void RefreshDockOffset() { foreach (var d in windows.OfType<DockWindow>()) d.ApplyOffset(); }
         internal static void RefreshDockAutoHide() { foreach (var d in windows.OfType<DockWindow>()) d.RefreshAutoHide(); }
         internal static IEnumerable<GlassWindow> OpenWindows { get { return windows.ToArray(); } }
         static DispatcherTimer refresh;

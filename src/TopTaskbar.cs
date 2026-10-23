@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
+using System.Threading.Tasks;
+using System.Windows.Automation;
 
 namespace ClearDesk
 {
@@ -122,7 +124,8 @@ namespace ClearDesk
                 if (!revealed)
                 {
                     bool atEdge = false;
-                    foreach (var t in top) { RECT mon; if (Monitor(t, out mon) && p.X >= mon.L && p.X < mon.R && p.Y <= mon.T + EdgePx - 1 && p.Y >= mon.T - 2) atEdge = true; }
+                    foreach (var t in top) { RECT mon; if (Monitor(t, out mon) && p.X >= mon.L && p.X < mon.R && p.Y <= mon.T + EdgePx - 1 && p.Y >= mon.T - 2 && Hot(t, p.X)) atEdge = true; }
+                    foreach (var t in top) RefreshHot(t, false);
                     if (atEdge && !FullscreenForeground()) { if (edgeSince == DateTime.MinValue) edgeSince = now; }
                     else edgeSince = DateTime.MinValue;
                     if (shell || (edgeSince != DateTime.MinValue && (now - edgeSince).TotalMilliseconds >= DwellMs))
@@ -149,6 +152,76 @@ namespace ClearDesk
                 ClaimWork(top); // cheap: only acts when explorer has re-reserved the strip
             }
             finally { Undpi(old); }
+        }
+
+        // ---- Hot zones: only the parts of the top edge above taskbar content (start / app icons,
+        // tray, clock) wake the taskbar; blank stretches do not. Found with UI Automation on a
+        // worker thread, cached per tray and refreshed every few seconds; whole edge on failure.
+        sealed class HotZones { public List<int[]> Spans; public DateTime At; public bool Busy; }
+        static readonly Dictionary<IntPtr, HotZones> hot = new Dictionary<IntPtr, HotZones>();
+        const int HotPad = 6, HotMerge = 20;
+        const double HotRefreshSeconds = 5;
+
+        internal static bool Hot(IntPtr tray, int x)
+        {
+            HotZones z;
+            lock (hot) { if (!hot.TryGetValue(tray, out z) || z.Spans == null) return true; }
+            foreach (var s in z.Spans) if (x >= s[0] && x <= s[1]) return true;
+            return false;
+        }
+
+        internal static List<int[]> HotSpans(IntPtr tray) { lock (hot) { HotZones z; return hot.TryGetValue(tray, out z) && z.Spans != null ? new List<int[]>(z.Spans) : null; } }
+
+        internal static void RefreshHot(IntPtr tray, bool force)
+        {
+            HotZones z;
+            lock (hot)
+            {
+                if (!hot.TryGetValue(tray, out z)) { if (hot.Count > 8) hot.Clear(); hot[tray] = z = new HotZones { At = DateTime.MinValue }; }
+                if (z.Busy || (!force && (DateTime.UtcNow - z.At).TotalSeconds < HotRefreshSeconds)) return;
+                z.Busy = true;
+            }
+            Task.Run(delegate
+            {
+                List<int[]> spans = null;
+                try { spans = ComputeHot(tray); } catch { spans = null; }
+                lock (hot) { z.Spans = spans; z.At = DateTime.UtcNow; z.Busy = false; }
+            });
+        }
+
+        internal static List<int[]> ComputeHot(IntPtr tray)
+        {
+            RECT tr; if (!GetWindowRect(tray, out tr)) return null;
+            var root = AutomationElement.FromHandle(tray);
+            var cond = new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.SplitButton),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem));
+            var raw = new List<int[]>();
+            int width = tr.R - tr.L, height = tr.B - tr.T;
+            foreach (AutomationElement e in root.FindAll(TreeScope.Descendants, cond))
+            {
+                System.Windows.Rect r;
+                try { r = e.Current.BoundingRectangle; } catch { continue; }
+                if (r.IsEmpty || r.Width < 4 || r.Width > width * .5 || r.Height > height * 1.6 + 4) continue;
+                if (r.Right < tr.L || r.Left > tr.R) continue;
+                raw.Add(new[] { (int)Math.Floor(r.Left) - HotPad, (int)Math.Ceiling(r.Right) + HotPad });
+            }
+            return MergeSpans(raw, HotMerge);
+        }
+
+        internal static List<int[]> MergeSpans(List<int[]> raw, int gap)
+        {
+            if (raw == null || raw.Count == 0) return null;
+            raw.Sort((a, b) => a[0].CompareTo(b[0]));
+            var merged = new List<int[]>();
+            foreach (var s in raw)
+            {
+                if (merged.Count > 0 && s[0] <= merged[merged.Count - 1][1] + gap) merged[merged.Count - 1][1] = Math.Max(merged[merged.Count - 1][1], s[1]);
+                else merged.Add(new[] { s[0], s[1] });
+            }
+            return merged;
         }
 
         [DllImport("user32.dll")] static extern short GetAsyncKeyState(int k);

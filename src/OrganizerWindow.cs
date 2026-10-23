@@ -245,24 +245,37 @@ namespace ClearDesk
                 Opacity = .06,
                 Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='Thumb'><Border Background='White'/></ControlTemplate>")
             };
+            Point start = new Point(); double startW = 0, startH = 0;
             grip.DragStarted += delegate
             {
                 BeginAnimation(HeightProperty, null);
+                start = CursorInfo.Dip(this); startW = Width; startH = Height;
             };
             grip.DragDelta += delegate (object sender, DragDeltaEventArgs e)
             {
                 if (State.Locked || State.Collapsed)
                     return;
                 var work = SystemParameters.WorkArea;
+                var now = CursorInfo.Dip(this);
+                double w = horizontal ? startW + now.X - start.X : Width, h = vertical ? startH + now.Y - start.Y : Height;
+                if (Program.S.Magnet && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
+                {
+                    var r = MagnetSnap.SnapResize(new Rect(Left, Top, Math.Max(1, w), Math.Max(1, h)), Program.SnapTargets(this), CursorInfo.Areas(this), MagnetSnap.Threshold, horizontal, vertical);
+                    if (r.SnappedX) w = r.X - Left;
+                    if (r.SnappedY) h = r.Y - Top;
+                    GuideOverlay.Show(r.Guides);
+                }
+                else GuideOverlay.Hide();
                 if (horizontal)
-                    Width = Math.Max(280, Math.Min(Math.Max(280, work.Right - Left), Width + e.HorizontalChange));
+                    Width = Math.Max(280, Math.Min(Math.Max(280, work.Right - Left), w));
                 if (vertical)
-                    Height = Math.Max(170, Math.Min(Math.Max(170, work.Bottom - Top), Height + e.VerticalChange));
+                    Height = Math.Max(170, Math.Min(Math.Max(170, work.Bottom - Top), h));
                 State.Width = Width;
                 State.Height = Height;
             };
             grip.DragCompleted += delegate
             {
+                GuideOverlay.Hide();
                 Program.Save();
             };
             Root.Children.Add(grip);

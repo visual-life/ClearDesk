@@ -216,6 +216,7 @@ namespace ClearDesk
             var area = SystemParameters.WorkArea;
             Left = area.Left + (area.Width - Width) / 2;
             Top = area.Bottom - Height - Program.S.DockOffset;
+            ApplyOffset();
             LayoutIcons();
             if (refresh && pending)
                 Rebuild();

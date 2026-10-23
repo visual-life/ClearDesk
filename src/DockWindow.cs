@@ -173,6 +173,15 @@ namespace ClearDesk
         internal double ShownTop { get; private set; }
         internal DockAutoHide AutoHide { get { return autoHide; } }
         internal DockAutoHide TestAutoHide() { if (autoHide == null) autoHide = new DockAutoHide(this); return autoHide; }
+        internal void ApplyOffset()
+        {
+            if (WasClosed) return;
+            var wa = SystemParameters.WorkArea;
+            ShownTop = wa.Bottom - Height - Program.S.DockOffset;
+            if (autoHide == null || !autoHide.Hidden) { BeginAnimation(TopProperty, null); Top = ShownTop; }
+            if (autoHide != null) autoHide.Evaluate();
+        }
+
         internal void RefreshAutoHide() { if (autoHide != null) autoHide.Evaluate(); }
 
         protected override void Material(string material)
