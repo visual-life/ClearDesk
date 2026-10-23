@@ -79,7 +79,7 @@ namespace ClearDesk
             Panel.SetZIndex(grip, 50);
             grip.DragDelta += delegate (object s, DragDeltaEventArgs e)
             {
-                if (State.Collapsed) return;
+                if (State.Collapsed || State.Locked) return;
                 Width = Math.Max(200, Width + e.HorizontalChange);
                 Height = Math.Max(140, Height + e.VerticalChange);
                 State.Width = Width; State.Height = Height;

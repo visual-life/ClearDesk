@@ -41,6 +41,75 @@ namespace ClearDesk
         Border toast;
         TextBlock lockBadge;
         MenuItem lockItem;
+        double baseW = double.NaN, baseH = double.NaN;
+        ScaleTransform scaler;
+        Border scaleGrip;
+        internal const double MinScale = .6, MaxScale = 2.5;
+
+        // Widgets with fixed internal layouts are resized by scaling their whole content
+        // proportionally; 收纳格 and 便签 resize their real layout instead.
+        protected virtual bool ScalesContent { get { return !(this is OrganizerWindow || this is NoteWindow || this is DockWindow || this is LaunchpadWindow); } }
+        internal bool Scalable { get { return ScalesContent; } }
+        internal double ContentScale { get { return ScalesContent ? Clamp(State.Scale) : 1; } }
+        static double Clamp(double v) { return double.IsNaN(v) || v <= 0 ? 1 : Math.Max(MinScale, Math.Min(MaxScale, v)); }
+
+        // Layout size in unscaled units; the real window is this size times the content scale.
+        public new double Width
+        {
+            get { return ScalesContent && !double.IsNaN(baseW) ? baseW : base.Width; }
+            set { if (ScalesContent) { baseW = value; base.Width = value * ContentScale; } else base.Width = value; }
+        }
+        public new double Height
+        {
+            get { return ScalesContent && !double.IsNaN(baseH) ? baseH : base.Height; }
+            set { if (ScalesContent) { baseH = value; base.Height = value * ContentScale; } else base.Height = value; }
+        }
+
+        internal void SetScale(double scale, bool save = true)
+        {
+            if (!ScalesContent) return;
+            State.Scale = Math.Round(Clamp(scale), 3);
+            double s = ContentScale;
+            if (scaler != null) { scaler.ScaleX = s; scaler.ScaleY = s; }
+            TextOptions.SetTextFormattingMode(this, Math.Abs(s - 1) < .001 ? TextFormattingMode.Display : TextFormattingMode.Ideal);
+            if (!double.IsNaN(baseW)) base.Width = baseW * s;
+            if (!double.IsNaN(baseH)) base.Height = baseH * s;
+            if (save) Program.Save();
+        }
+
+        void AddScaleGrip()
+        {
+            scaleGrip = new Border
+            {
+                Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 5, 5), Background = Brushes.Transparent, Cursor = Cursors.SizeNWSE, Opacity = 0,
+                ToolTip = "拖动调整大小（内容按比例缩放）",
+                Child = new System.Windows.Shapes.Path { Data = Geometry.Parse("M 15,5 L 5,15 M 15,10 L 10,15"), Stroke = new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)), StrokeThickness = 1.4, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round }
+            };
+            Panel.SetZIndex(scaleGrip, 95);
+            System.Drawing.Point start = System.Drawing.Point.Empty; double startScale = 1; bool resizing = false;
+            scaleGrip.MouseLeftButtonDown += delegate (object sender, MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                if (State.Locked || State.Collapsed) return;
+                start = System.Windows.Forms.Cursor.Position; startScale = ContentScale; resizing = scaleGrip.CaptureMouse();
+            };
+            scaleGrip.MouseMove += delegate (object sender, MouseEventArgs e)
+            {
+                if (!resizing) return;
+                if (e.LeftButton != MouseButtonState.Pressed) { resizing = false; scaleGrip.ReleaseMouseCapture(); Program.Save(); return; }
+                var dpi = VisualTreeHelper.GetDpi(this); var now = System.Windows.Forms.Cursor.Position;
+                double w0 = Math.Max(1, baseW * startScale), h0 = Math.Max(1, baseH * startScale);
+                double fx = (w0 + (now.X - start.X) / dpi.DpiScaleX) / w0, fy = (h0 + (now.Y - start.Y) / dpi.DpiScaleY) / h0;
+                SetScale(startScale * (Math.Abs(fx - 1) > Math.Abs(fy - 1) ? fx : fy), false);
+                e.Handled = true;
+            };
+            scaleGrip.MouseLeftButtonUp += delegate (object sender, MouseButtonEventArgs e) { if (resizing) { resizing = false; scaleGrip.ReleaseMouseCapture(); Program.Save(); } e.Handled = true; };
+            scaleGrip.LostMouseCapture += delegate { if (resizing) { resizing = false; Program.Save(); } };
+            MouseEnter += delegate { if (!State.Locked && !State.Collapsed) Fade(scaleGrip, .85, 160); };
+            MouseLeave += delegate { if (!resizing) Fade(scaleGrip, 0, 220); };
+            Root.Children.Add(scaleGrip);
+        }
         public string ExportName
         {
             get
@@ -85,6 +154,12 @@ namespace ClearDesk
                 Child = Root
             };
             Content = Frame;
+            if (ScalesContent)
+            {
+                scaler = new ScaleTransform(1, 1);
+                Frame.LayoutTransform = scaler;
+                SetScale(State.Scale, false);
+            }
             if (!plain || state.MaterialSelected)
             {
                 Surface = new GlassPane(state.Material);
@@ -92,7 +167,7 @@ namespace ClearDesk
                 MouseMove += delegate (object sender, MouseEventArgs e)
                 {
                     if (Root.Children.Contains(Surface))
-                        Surface.Pointer(e.GetPosition(Root), ActualWidth, ActualHeight);
+                        Surface.Pointer(e.GetPosition(Root), Root.ActualWidth, Root.ActualHeight);
                 };
                 MouseLeave += delegate
                 {
@@ -154,6 +229,7 @@ namespace ClearDesk
             };
             Panel.SetZIndex(lockBadge, 90);
             Root.Children.Add(lockBadge);
+            if (ScalesContent) AddScaleGrip();
             MouseEnter += delegate { if (State.Locked && !(this is DockWindow) && !(this is LaunchpadWindow)) Fade(lockBadge, .6, 160); };
             MouseLeave += delegate { Fade(lockBadge, 0, 220); };
             LocationChanged += delegate
@@ -172,7 +248,8 @@ namespace ClearDesk
             };
             SizeChanged += delegate
             {
-                Root.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, ActualWidth - 2), Math.Max(0, ActualHeight - 2)), 22, 22);
+                double cw = ActualWidth / ContentScale, ch = ActualHeight / ContentScale;
+                Root.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, cw - 2), Math.Max(0, ch - 2)), 22, 22);
                 UpdatePaper();
             };
             ContextMenu = Menu();
@@ -255,6 +332,23 @@ namespace ClearDesk
                 SetCollapsed();
                 Program.Save();
             }));
+            if (ScalesContent)
+            {
+                var size = new MenuItem { Header = "调整大小", Tag = "size" };
+                foreach (var pct in new[] { 75, 100, 125, 150, 175, 200 })
+                {
+                    double v = pct / 100.0;
+                    size.Items.Add(Item(pct == 100 ? "100%（默认）" : pct + "%", delegate { if (!State.Locked) SetScale(v); }));
+                }
+                size.Items.Add(Item("提示：拖动右下角可自由缩放", delegate { }));
+                ((MenuItem)size.Items[size.Items.Count - 1]).IsEnabled = false;
+                size.SubmenuOpened += delegate
+                {
+                    for (int i = 0; i < 6; i++) ((MenuItem)size.Items[i]).IsChecked = Math.Abs(ContentScale * 100 - new[] { 75, 100, 125, 150, 175, 200 }[i]) < .6;
+                };
+                c.Opened += delegate { size.IsEnabled = !State.Locked && !State.Collapsed; size.ToolTip = State.Locked ? "已锁定，解锁后可调整大小" : null; };
+                c.Items.Add(size);
+            }
             lockItem = new MenuItem { Tag = "lock", StaysOpenOnClick = false };
             lockItem.Click += delegate { SetLocked(!State.Locked); };
             UpdateLockItem();

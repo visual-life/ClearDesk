@@ -21,6 +21,7 @@ namespace ClearDesk
         public bool IconsVisible, IconsChanged;
         public int TaskbarProcessId;
         public string TaskbarPath;
+        public bool TopTaskbarHidden;
     }
 
     public class DesktopServices : IDisposable
@@ -104,6 +105,8 @@ namespace ClearDesk
                 taskbarActive = true;
             }
 
+            TopTaskbar.Sync();
+
             if (!Program.S.Taskbar && taskbarActive)
             {
                 taskbar.Dispose();
@@ -111,6 +114,15 @@ namespace ClearDesk
                 WriteRecovery();
                 taskbarActive = false;
             }
+        }
+
+        public void MarkTopTaskbar(bool hidden)
+        {
+            if (Program.Preview || disposed || (!hidden && !restore.TopTaskbarHidden))
+                return;
+            EnsureRecovery();
+            restore.TopTaskbarHidden = hidden;
+            WriteRecovery();
         }
 
         public void ToggleIcons()
@@ -198,6 +210,7 @@ namespace ClearDesk
             animator.Clear();
             RestoreIcons();
             taskbar.Dispose();
+            try { TopTaskbar.Stop(); } catch { }
             if (File.Exists(recovery))
                 File.Delete(recovery);
             if (guardian != null)
@@ -234,6 +247,8 @@ namespace ClearDesk
                 }
 
                 TaskbarService.CloseOwned(r.TaskbarProcessId, r.TaskbarPath);
+                if (r.TopTaskbarHidden)
+                    TopTaskbar.Restore();
                 File.Delete(path);
             }
             catch

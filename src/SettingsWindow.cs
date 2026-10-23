@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.4";
+        internal const string Version = "2.0.5";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -161,6 +161,7 @@ namespace ClearDesk
             Range(g,"自动隐藏延迟","空闲多久后隐藏图标。",3,120,state.IdleSeconds," 秒",v => state.IdleSeconds=v);
             g=AddGroup(0,"任务栏与窗口");
             Toggle(g,"透明任务栏","保留任务栏图标清晰度，退出时恢复。",state.Taskbar,v => { state.Taskbar=v; if (!Program.Preview) Program.Services.Apply(); });
+            Toggle(g,"顶部任务栏自动隐藏","任务栏放在屏幕顶部时 Windows 不支持自动隐藏：开启后由 ClearDesk 收起任务栏、让窗口铺满屏幕；鼠标停在屏幕最上边缘即可唤出，打开开始菜单或托盘时也会显示。关闭或退出 ClearDesk 时自动恢复。",state.TopTaskbarAutoHide,v => { state.TopTaskbarAutoHide=v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"窗口最小化动画","实验性 · 部分窗口可能不支持。",state.Animation,v => { state.Animation=v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"恢复窗口时播放动画","从任务栏或桌面恢复窗口时播放。",state.RestoreAnimation,v => state.RestoreAnimation=v);
         Toggle(g,"GPU \u786c\u4ef6\u52a0\u901f\u6e32\u67d3","\u52a8\u753b\u66f4\u987a\u6ed1\uff0c\u4f46\u5185\u5b58\u5360\u7528\u7ea6\u589e\u52a0 150 MB\uff1b\u91cd\u542f ClearDesk \u540e\u751f\u6548\u3002\u9ed8\u8ba4\u5173\u95ed\u4ee5\u8282\u7701\u5185\u5b58\u3002",state.GpuRendering,v => state.GpuRendering=v);
@@ -186,7 +187,7 @@ namespace ClearDesk
             g=AddGroup(4,"Dock 材质");
             var dock=Program.Widget("dock",0,0,620,140);
             Choice(g,"背景材质","图标保持清晰；磨砂实时模糊后方窗口。",new[]{"玻璃 · 实时清透","磨砂 · 实时模糊"},dock.Material=="frosted"?1:0,i => { dock.Material=i==1?"frosted":"liquid"; dock.MaterialSelected=true; });
-            Row(g,"组件材质","右键各桌面组件可独立选择材质、锁定位置、新建组件或恢复位置。");
+            Row(g,"组件材质","右键各桌面组件可独立选择材质、调整大小、锁定位置、新建组件或恢复位置；悬停时拖动右下角也可缩放。");
             g=AddGroup(4,"桌面组件");
             Toggle(g,"时钟","时间与日期。",state.Clock,v=>state.Clock=v);
             Toggle(g,"性能","CPU、GPU、内存与网络。",state.Performance,v=>state.Performance=v);
@@ -354,6 +355,8 @@ namespace ClearDesk
                 WidgetManager.SetVisible(entry, !entry.Visible);
                 status.Text = entry.Visible ? "已显示“" + entry.Name + "”。" : "已关闭“" + entry.Name + "”，可随时重新显示。"; RefreshManager();
             }, (e.Visible ? "关闭 " : "显示 ") + e.Name));
+            if (WidgetManager.CanResetSize(e))
+                actions.Children.Add(Small("重置大小", delegate { WidgetManager.ResetSize(entry); status.Text = "已将“" + entry.Name + "”恢复为默认大小。"; RefreshManager(); }, "重置大小 " + e.Name));
             actions.Children.Add(Small("定位", delegate { WidgetManager.Locate(entry); RefreshManager(); }, "定位 " + e.Name));
             actions.Children.Add(Small("删除", delegate
             {

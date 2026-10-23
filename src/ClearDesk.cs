@@ -23,6 +23,7 @@ namespace ClearDesk
         public bool MaterialSelected = false;
         public bool Locked = false, Collapsed = false, List = false, Desktop = false, Enabled = true;
         public string Material = "liquid";
+        public double Scale = 1;
         public string Text = "", NoteColor = "amber";
         public List<string> Items = new List<string>();
         public List<string> Excluded = new List<string>();
@@ -34,7 +35,7 @@ namespace ClearDesk
         public int ConfigVersion = 1;
         public bool GpuRendering = false;
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
-        public bool DockAutoHide = false, QuickControls = false;
+        public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false;
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
@@ -165,6 +166,8 @@ namespace ClearDesk
             Rebuild();
             if (!Preview)
             {
+                // Crash-safe: if an earlier session (and its guard) died with the top taskbar hidden, bring it back first.
+                try { TopTaskbar.Restore(); } catch (Exception e) { Log(e); }
                 Services.Apply();
                 if (S.HideAtStart)
                     Services.SetIcons(false, false);

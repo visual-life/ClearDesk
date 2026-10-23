@@ -135,6 +135,21 @@ namespace ClearDesk
             e.Visible = visible;
         }
 
+        internal static bool CanResetSize(WidgetEntry e)
+        {
+            return e.Data != null && e.Kind != "note" && e.Kind != "box" && Math.Abs((e.Data.Scale <= 0 ? 1 : e.Data.Scale) - 1) > .001;
+        }
+
+        // 重置大小: back to 100% content scale.
+        internal static void ResetSize(WidgetEntry e)
+        {
+            if (e.Data == null) return;
+            e.Data.Scale = 1;
+            var w = Window(e);
+            if (w != null) w.SetScale(1, false);
+            Program.Save();
+        }
+
         internal static GlassWindow Locate(WidgetEntry e)
         {
             if (!e.Visible) SetVisible(e, true);

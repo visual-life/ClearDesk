@@ -36,7 +36,7 @@ namespace ClearDesk
             try
             {
                 window.Show(); await Task.Delay(180); window.UpdateLayout();
-                check(window.TestCards==2 && Children<CheckBox>(window).Count()==9,"settings general page contains the eight original desktop and window switches plus GPU rendering");
+                check(window.TestCards==2 && Children<CheckBox>(window).Count()==10,"settings general page contains the eight original desktop and window switches plus GPU rendering and top taskbar auto-hide");
                 Capture(window,"settings-general");
                 bool allPages=true;
                 for(int i=0;i<7;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
