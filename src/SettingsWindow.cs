@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.0.8";
+        internal const string Version = "2.1.1";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -131,6 +131,25 @@ namespace ClearDesk
             group.Rows.Children.Add(line); group.Entries.Add(new KeyValuePair<FrameworkElement,string>(line, title + " " + description));
             return hintBlock;
         }
+        // 2.0.9: shows whether Windows will really start ClearDesk at logon (StartupApproved), and opens
+        // Windows' 启动应用 page when it was switched off there.
+        void StartupRow(Group group, Action<bool> startup)
+        {
+            const string title = "登录后自动启动";
+            var toggle = new CheckBox { IsChecked = Program.Startup() }; AutomationProperties.SetName(toggle,title);
+            var open = ActionButton("启动应用设置", delegate { try { Process.Start(new ProcessStartInfo("ms-settings:startupapps") { UseShellExecute = true }); } catch { status.Text = "无法打开 Windows 设置，请在任务管理器的“启动应用”中查看。"; } });
+            open.Margin = new Thickness(12,0,0,0); AutomationProperties.SetName(open,"打开 Windows 启动应用设置"); open.ToolTip = "ClearDesk 被 Windows 或安全软件禁用时，在这里重新打开";
+            var panel = new StackPanel { Orientation = Orientation.Horizontal }; panel.Children.Add(toggle); panel.Children.Add(open);
+            var hint = Row(group,title,Program.StartupDescription(),panel);
+            Activated += delegate { if (hint != null) hint.Text = Program.StartupDescription(); };
+            toggle.Click += delegate
+            {
+                startup(toggle.IsChecked == true);
+                if (toggle.IsChecked == true && !Program.LastStartupOk) toggle.IsChecked = false;
+                if (hint != null) hint.Text = Program.StartupDescription();
+                Changed(); if (Program.LastStartupMessage.Length > 0) status.Text = Program.LastStartupMessage;
+            };
+        }
         void Toggle(Group group, string title, string description, bool initial, Action<bool> change)
         {
             var toggle = new CheckBox { IsChecked = initial }; AutomationProperties.SetName(toggle,title);
@@ -153,7 +172,7 @@ namespace ClearDesk
         void BuildPages(Action<bool> startup)
         {
             var g = AddGroup(0,"桌面与启动");
-            Toggle(g,"登录后自动启动","开机后自动运行 ClearDesk。",Program.Startup(),startup);
+            StartupRow(g,startup);
             Toggle(g,"双击桌面隐藏图标","在桌面空白处双击，隐藏或显示原生图标。",state.Icons,v => { state.Icons = v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"启动时隐藏原生图标","退出 ClearDesk 时恢复。",state.HideAtStart,v => state.HideAtStart=v);
             Toggle(g,"空闲时自动隐藏","一段时间没有操作时，自动隐藏桌面图标。",state.AutoHide,v => state.AutoHide=v);
@@ -238,13 +257,124 @@ namespace ClearDesk
             }
             Row(g,"便签","可新建多张，自动保存；右键可换颜色或删除。",ActionButton("新建便签",delegate { Program.NewNote(); }));
             g=AddGroup(4,"天气与隐私");
-            Toggle(g,"自动天气联网","IPwho.is 获取近似城市，Open-Meteo 接收城市坐标获取天气。",state.WeatherOnline,v=>state.WeatherOnline=v);
-            Row(g,"所在地自动获取","仅自动定位，无手选城市。代理或 VPN 可能影响城市；右键天气可重新定位。不保存 IP 或坐标。");
+            Toggle(g,"自动天气联网","天气：中国大陆优先腾讯天气，备用 Open-Meteo、met.no、wttr.in，逐个回退；定位只在需要时请求。不保存 IP，仅在本机缓存最近一次天气和约 1 公里精度的位置，断网时显示上次数据。",state.WeatherOnline,v=>{ state.WeatherOnline=v; Program.Save(); RefreshWeather(false); });
+            WeatherRows(g);
+            g=AddGroup(5,"软件更新");
+            UpdateRows(g);
             g=AddGroup(5,"ClearDesk");
             Row(g,"清透桌面","版本 "+Version+" · 维护者 visual-life");
-            Row(g,"本地配置","配置保存在本机，无账户、广告或遥测。",ActionButton("打开配置目录",delegate { Process.Start(new ProcessStartInfo(Program.Data){UseShellExecute=true}); }));
+            Row(g,"本地配置","配置保存在本机，无账户、广告或遥测；检查更新只会请求版本清单，不上传任何个人信息。",ActionButton("打开配置目录",delegate { Process.Start(new ProcessStartInfo(Program.Data){UseShellExecute=true}); }));
             Row(g,"恢复与退出","关闭所有组件，恢复桌面和任务栏。",ActionButton("退出并恢复",Program.Quit));
             Row(g,"使用提示","关闭设置窗口后，ClearDesk 继续在托盘运行。双击托盘图标可再次打开设置。");
+        }
+        // 2.1.1: weather location — Windows location, IP vote, or a county-level place chosen by hand
+        static void RefreshWeather(bool relocate)
+        {
+            if (relocate) WeatherService.Shared.PlaceChanged();
+            foreach (var w in Program.OpenWindows.OfType<WeatherWindow>().ToList()) if (!w.WasClosed) { var t = w.FetchAsync(true); }
+        }
+        static string PlaceStatus(Settings st)
+        {
+            var svc = WeatherService.Shared; var c = svc.Cached; var p = svc.CurrentPlace;
+            if (st.WeatherManual) { var m = st.ManualPlace(); if (m != null) return "当前：" + m.Display + (m.City.Length > 0 && m.City != m.Display ? "（" + m.City + "）" : "") + " · 手动选择"; }
+            if (p == null || p.Display.Length == 0) return "当前：尚未定位（打开天气组件后自动定位）。";
+            return "当前：" + p.Display + (p.City.Length > 0 && p.City != p.Display ? "（" + p.City + "）" : "") + " · " + (string.IsNullOrEmpty(p.Source) ? "自动" : p.Source) + (p.Kind == "ip" ? "，只能到城市级别" : "");
+        }
+        void WeatherRows(Group g)
+        {
+            TextBlock status = null, hint = null; Button search = null; TextBox box = null; StackPanel results = null; Border resultsLine = null;
+            Toggle(g, "使用 Windows 定位", "优先用 Windows 定位服务（Wi-Fi / GPS，比 IP 准，不受代理影响）。需要在 Windows 设置 → 隐私和安全性 → 位置 中打开定位并允许桌面应用访问；不可用时自动改用网络 IP。", state.WeatherSystemLocation, v => { state.WeatherSystemLocation = v; Program.Save(); RefreshWeather(true); });
+            var relocate = ActionButton("重新定位", delegate { RefreshWeather(true); status.Text = "正在重新定位并刷新天气…"; });
+            AutomationProperties.SetName(relocate, "重新定位并刷新天气");
+            status = Row(g, "所在地", PlaceStatus(state), relocate);
+            Activated += delegate { if (status != null) status.Text = PlaceStatus(state); };
+            box = new TextBox { Width = 170, ToolTip = "输入区、县或城市名，例如 赛罕区、黄浦区" }; AutomationProperties.SetName(box, "手动选择所在地");
+            Action doSearch = async delegate
+            {
+                string q = box.Text.Trim(); if (q.Length == 0) return;
+                search.IsEnabled = false; hint.Text = "正在搜索…"; results.Children.Clear();
+                try
+                {
+                    var found = await PlaceLookup.SearchAsync(WeatherService.Download, q, System.Threading.CancellationToken.None, null);
+                    if (found.Count == 0) hint.Text = "没有找到“" + q + "”。可换成区县全称（如 赛罕区）再试，或检查网络。";
+                    else
+                    {
+                        hint.Text = "找到 " + found.Count + " 个结果，点击要使用的地点：";
+                        foreach (var place in found)
+                        {
+                            var pick = place; string label = pick.FullName + (pick.CountryCode.Length > 0 && pick.CountryCode != "CN" ? "（" + pick.CountryCode + "）" : "");
+                            var b = ActionButton(label, delegate { ApplyManual(pick, hint, status); }); b.Margin = new Thickness(0, 4, 8, 0); b.HorizontalAlignment = HorizontalAlignment.Left;
+                            AutomationProperties.SetName(b, "选择 " + label); results.Children.Add(b);
+                        }
+                    }
+                }
+                catch (Exception e) { hint.Text = "搜索失败：" + WeatherService.Reason(e); }
+                finally { search.IsEnabled = true; results.Visibility = results.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed; }
+            };
+            search = ActionButton("搜索", delegate { doSearch(); }); search.Margin = new Thickness(8, 0, 0, 0); AutomationProperties.SetName(search, "搜索所在地");
+            box.KeyDown += (s, e) => { if (e.Key == Key.Enter) doSearch(); };
+            var auto = ActionButton("恢复自动", delegate { state.WeatherManual = false; Program.Save(); RefreshWeather(true); hint.Text = "已恢复自动定位。"; status.Text = PlaceStatus(state); }); auto.Margin = new Thickness(8, 0, 0, 0); AutomationProperties.SetName(auto, "恢复自动定位");
+            var panel = new StackPanel { Orientation = Orientation.Horizontal }; panel.Children.Add(box); panel.Children.Add(search); panel.Children.Add(auto);
+            hint = Row(g, "手动选择区县", "输入区、县或城市名（如 赛罕区、黄浦区）搜索并选择。IP 定位通常只能到城市级别，要显示准确的区县就在这里选。", panel);
+            results = new StackPanel { Margin = new Thickness(0, 0, 0, 8), Visibility = Visibility.Collapsed };
+            resultsLine = new Border { BorderBrush = Color("#EDF0F5"), BorderThickness = new Thickness(0, 1, 0, 0), Child = results };
+            g.Rows.Children.Add(resultsLine); g.Entries.Add(new KeyValuePair<FrameworkElement, string>(resultsLine, "手动选择区县 搜索结果"));
+        }
+        async void ApplyManual(GeoPlace p, TextBlock hint, TextBlock status)
+        {
+            hint.Text = "正在确认 " + p.FullName + " …";
+            try
+            {
+                // normalise the chosen coordinates with a reverse geocode so the name is the proper county-level one (黄浦 → 黄浦区)
+                if (p.HasCoords && (p.District.Length == 0 || !PlaceNames.IsCountyLevel(p.District)))
+                {
+                    var rev = await PlaceLookup.ReverseAsync(WeatherService.Download, p.Lat, p.Lon, System.Threading.CancellationToken.None, null);
+                    if (rev.District.Length > 0 && (p.CountryCode.Length == 0 || rev.CountryCode == p.CountryCode)) { p.District = rev.District; if (rev.City.Length > 0) p.City = rev.City; if (rev.Province.Length > 0) p.Province = rev.Province; }
+                }
+            }
+            catch { }
+            state.WeatherManual = true; state.ManualProvince = p.Province; state.ManualCity = p.City; state.ManualDistrict = p.District; state.ManualCountry = p.CountryCode.Length > 0 ? p.CountryCode : "CN";
+            state.ManualLat = p.HasCoords ? Math.Round(p.Lat, 2) : 0; state.ManualLon = p.HasCoords ? Math.Round(p.Lon, 2) : 0;
+            Program.Save(); RefreshWeather(true);
+            hint.Text = "已选择 " + p.Display + "（" + p.FullName + "），天气组件会按它刷新。"; status.Text = PlaceStatus(state);
+        }
+        // 2.1.0: online update — 检查更新 / 自动检查 / 更新源
+        void UpdateRows(Group g)
+        {
+            TextBlock hint = null; Button check = null;
+            check = ActionButton("检查更新", async delegate
+            {
+                check.IsEnabled = false; hint.Text = "正在检查更新…";
+                try
+                {
+                    var r = await UpdateService.CheckAsync();
+                    if (!r.Completed) hint.Text = r.Error + "（" + UpdateService.LastCheckText() + "）";
+                    else
+                    {
+                        UpdateService.Record(r);
+                        if (r.Newer) { hint.Text = "发现新版本 " + r.Manifest.Latest + (r.Manifest.NotifyOnly ? "（需要手动下载）。" : "，可以更新。"); UpdateWindow.ShowFor(r.Manifest, true); }
+                        else hint.Text = "已是最新版本（" + Version + "）。" + UpdateService.LastCheckText();
+                    }
+                }
+                catch (Exception e) { hint.Text = "检查更新失败：" + e.Message; }
+                finally { check.IsEnabled = true; }
+            }, true);
+            AutomationProperties.SetName(check, "检查更新");
+            hint = Row(g, "当前版本 " + Version, UpdateService.LastCheckText(), check);
+            Toggle(g, "自动检查更新", "启动后在后台检查，最多每 12 小时一次；只请求版本清单，不上传任何个人信息。关闭后只在你点“检查更新”时联网。", state.AutoUpdateCheck, v => state.AutoUpdateCheck = v);
+            var box = new TextBox { Width = 270, Text = state.UpdateSource ?? "", ToolTip = "留空使用默认更新源" }; AutomationProperties.SetName(box, "更新源");
+            var reset = ActionButton("恢复默认", delegate { box.Text = ""; }); reset.Margin = new Thickness(8, 0, 0, 0); AutomationProperties.SetName(reset, "恢复默认更新源");
+            var panel = new StackPanel { Orientation = Orientation.Horizontal }; panel.Children.Add(box); panel.Children.Add(reset);
+            string normal = "默认 " + UpdateSources.Defaults[0] + "。有了域名后在这里填 https://你的域名/ 即可，不需要重新安装；留空使用默认。";
+            var srcHint = Row(g, "更新源", normal, panel);
+            box.TextChanged += delegate
+            {
+                string t = box.Text.Trim();
+                if (t.Length == 0) { state.UpdateSource = ""; Program.Save(); srcHint.Text = normal; }
+                else if (UpdateSources.IsHttpUrl(t)) { state.UpdateSource = t; Program.Save(); srcHint.Text = normal; }
+                else srcHint.Text = "地址无效：只支持 http:// 或 https:// 开头的网址。";
+            };
+            Row(g, "更新方式", "发现新版本后点“立即更新”：下载 → 验证签名和 SHA256 → ClearDesk 自动退出、替换文件并重新打开；失败会自动恢复旧版本。你的设置和便签保存在 %LOCALAPPDATA%\\ClearDesk，更新不会改动。");
         }
         void Render()
         {

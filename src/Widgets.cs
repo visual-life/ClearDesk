@@ -1032,16 +1032,65 @@ namespace ClearDesk
         }
         internal void TestShowReading(WeatherReading r) { lastReading=r; RenderForecast(); }
         public WeatherWindow() : this(WeatherService.Shared) { }
+        readonly TextBlock source = Program.Text("", 10, "#A8B7C9");
+        int failures;
+        System.Windows.Threading.DispatcherTimer netTimer;
+        DateTime lastNetworkRefresh = DateTime.MinValue;
+        static readonly Random Jitter = new Random();
+        /// <summary>Delay before the next automatic refresh: ~20 minutes after a success (±10%); 1, 2, 4, 8, then 15 minutes (±20%) after failures.</summary>
+        internal static TimeSpan NextDelay(int failureCount, double random)
+        {
+            if (failureCount <= 0) return TimeSpan.FromMinutes(20 * (0.9 + 0.2 * random));
+            double[] steps = { 1, 2, 4, 8, 15 };
+            return TimeSpan.FromMinutes(steps[Math.Min(failureCount, steps.Length) - 1] * (0.8 + 0.4 * random));
+        }
         internal WeatherWindow(IWeatherService service) : base(Program.Widget("weather", SystemParameters.WorkArea.Right - 370, 420, 350, 250), "天气")
         {
             weather=service;
             var p=new StackPanel(); p.Children.Add(temp); p.Children.Add(description);
             detail.Margin=new Thickness(0,10,0,8); p.Children.Add(detail);
             forecast.Margin=new Thickness(0,0,0,10); forecast.Visibility=Visibility.Collapsed; p.Children.Add(forecast);
-            p.Children.Add(Program.Text("天气：Open-Meteo · 定位：IPwho.is",10,"#A8B7C9")); Body.Children.Add(p);
-            ContextMenu.Items.Insert(0,Item("重新定位并刷新",delegate { _ = FetchAsync(true); }));
+            p.Children.Add(source); Body.Children.Add(p);
+            ContextMenu.Items.Insert(0,Item("重新定位并刷新",delegate { weather.NetworkChanged(); _ = FetchAsync(true); }));
             Tick(60000,delegate { _ = FetchAsync(false); });
-            Closed+=delegate { cancel.Cancel(); };
+            var cachedReading=weather.Cached;
+            if(cachedReading!=null && Program.S.WeatherOnline) Show(cachedReading);   // last good data right away, marked with its age
+            System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged+=OnNetworkEvent;
+            Microsoft.Win32.SystemEvents.PowerModeChanged+=OnPowerEvent;
+            Closed+=delegate
+            {
+                cancel.Cancel();
+                System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged-=OnNetworkEvent;
+                Microsoft.Win32.SystemEvents.PowerModeChanged-=OnPowerEvent;
+                if(netTimer!=null) netTimer.Stop();
+            };
+        }
+        void OnNetworkEvent(object sender,EventArgs e) { try { Dispatcher.BeginInvoke(new Action(delegate { ScheduleRefresh(6); })); } catch { } }
+        void OnPowerEvent(object sender,Microsoft.Win32.PowerModeChangedEventArgs e) { if(e.Mode==Microsoft.Win32.PowerModes.Resume) { try { Dispatcher.BeginInvoke(new Action(delegate { ScheduleRefresh(12); })); } catch { } } }
+        /// <summary>Network changed or the PC woke up: wait for the network to settle, then re-locate and refresh (at most once a minute).</summary>
+        void ScheduleRefresh(int seconds)
+        {
+            if(WasClosed) return;
+            if(netTimer==null) { netTimer=new System.Windows.Threading.DispatcherTimer(); netTimer.Tick+=delegate
+            {
+                netTimer.Stop(); if(WasClosed || !Program.S.WeatherOnline) return;
+                if(DateTime.UtcNow-lastNetworkRefresh<TimeSpan.FromSeconds(60)) return;
+                lastNetworkRefresh=DateTime.UtcNow; weather.NetworkChanged(); retryAfter=DateTime.MinValue; _ = FetchAsync(false);
+            }; }
+            netTimer.Stop(); netTimer.Interval=TimeSpan.FromSeconds(seconds); netTimer.Start();
+        }
+        static string Age(WeatherReading r) { return r.Updated==default(DateTime) ? "" : "更新于 "+r.Updated.ToString("HH:mm"); }
+        void Show(WeatherReading reading)
+        {
+            lastReading=reading; temp.FontSize=40; temp.Text=reading.Temperature.ToString("0°");
+            description.Text=reading.City+" · "+Description(reading.Code);
+            detail.Text="湿度 "+reading.Humidity.ToString("0")+"%  ·  风速 "+reading.Wind.ToString("0.#")+" km/h\n"+(reading.Stale?Age(reading)+"（离线，显示上次数据）":Age(reading)+(string.IsNullOrEmpty(reading.Time)?"":" · 天气时间 "+reading.Time));
+            string kind=reading.Place==null?"":reading.Place.Kind, loc=string.IsNullOrEmpty(reading.PlaceSource)?"自动":reading.PlaceSource;
+            source.Text="天气："+(string.IsNullOrEmpty(reading.Source)?"—":reading.Source)+" · 定位："+loc;
+            detail.ToolTip=kind=="ip"?"城市由网络 IP 推断，只能到城市级别，代理或 VPN 可能影响结果。可在 设置 → 外观与材质 手动选择区县。"
+                :kind=="system"?"位置来自 Windows 定位服务（在 Windows 设置 → 隐私和安全性 → 位置 中管理）。"
+                :kind=="manual"?"位置为你在设置里手动选择的区县。":null;
+            RenderForecast();
         }
         internal async Task FetchAsync(bool force)
         {
@@ -1049,36 +1098,50 @@ namespace ClearDesk
             if(!Program.S.WeatherOnline)
             {
                 temp.Text="未联网"; temp.FontSize=28; description.Text="在设置中开启自动天气联网";
-                detail.Text="按网络 IP 获取近似城市，不使用手选城市。"; return;
+                detail.Text="可手动选择区县，或使用 Windows 定位 / 网络 IP 自动定位。"; source.Text=""; return;
             }
             if(!force && DateTime.UtcNow<retryAfter) return;
-            busy=true; description.Text="正在自动定位并获取天气…";
+            busy=true; if(lastReading==null) description.Text="正在自动定位并获取天气…";
             try
             {
                 var reading=await weather.ReadAsync(force,cancel.Token);
                 if(WasClosed || !Program.S.WeatherOnline) return;
-                lastReading=reading; temp.FontSize=40; temp.Text=reading.Temperature.ToString("0°");
-                description.Text=reading.City+" · "+Description(reading.Code);
-                detail.Text="湿度 "+reading.Humidity.ToString("0")+"%  ·  风速 "+reading.Wind.ToString("0.#")+" km/h\n天气时间 "+reading.Time+" · 自动定位（IP）";
-                detail.ToolTip="城市由网络 IP 推断，代理或 VPN 可能影响结果。"; retryAfter=DateTime.UtcNow.AddMinutes(20);
-                RenderForecast();
+                failures=0; Show(reading); retryAfter=DateTime.UtcNow+NextDelay(0,Jitter.NextDouble());
             }
             catch(Exception error)
             {
                 if(WasClosed || cancel.IsCancellationRequested) return;
-                // Avoid recording URLs, IP responses or coordinates in user logs.
-                description.Text=lastReading==null?"自动天气暂不可用":lastReading.City+" · 更新失败";
-                detail.Text=lastReading==null?"请检查网络，右键重新定位并刷新。":"保留上次天气 · "+lastReading.Time+"\n右键可重新定位并刷新。";
-                detail.ToolTip=error is OperationCanceledException?"请求超时":"定位或天气服务暂不可用";
-                retryAfter=DateTime.UtcNow.AddMinutes(5);
+                failures++; var wait=NextDelay(failures,Jitter.NextDouble()); retryAfter=DateTime.UtcNow+wait;
+                string why=error is WeatherException?string.Join("；",((WeatherException)error).Reasons.Where(x=>x.Contains("失败")).Take(3)):"";
+                if(lastReading==null)
+                {
+                    temp.Text="—"; temp.FontSize=40; description.Text="自动天气暂不可用";
+                    detail.Text="已尝试多个天气来源都没有成功，约 "+Math.Max(1,(int)Math.Round(wait.TotalMinutes))+" 分钟后自动重试。\n也可右键重新定位并刷新。";
+                    source.Text=error is WeatherException && !string.IsNullOrEmpty(error.Message)?error.Message:"";
+                }
+                else
+                {
+                    // keep showing the last good reading, just say how old it is — no error card
+                    lastReading.Stale=true; temp.FontSize=40; temp.Text=lastReading.Temperature.ToString("0°");
+                    description.Text=lastReading.City+" · "+Description(lastReading.Code);
+                    detail.Text="湿度 "+lastReading.Humidity.ToString("0")+"%  ·  风速 "+lastReading.Wind.ToString("0.#")+" km/h\n"+Age(lastReading)+"（网络异常，约 "+Math.Max(1,(int)Math.Round(wait.TotalMinutes))+" 分钟后重试）";
+                    RenderForecast();
+                }
+                detail.ToolTip=(error is OperationCanceledException?"请求超时":"定位或天气服务暂不可用")+(why.Length>0?"：\n"+why.Replace("；","\n"):"");
             }
             finally { busy=false; }
         }
         internal string TestDescription { get { return description.Text; } }
+        internal string TestDetail { get { return detail.Text; } }
+        internal string TestSource { get { return source.Text; } }
         internal string TestTemperature { get { return temp.Text; } }
 
         public static string Description(int code)
         {
+            if (code == 101)
+                return "沙尘";
+            if (code == 102)
+                return "霾";
             if (code == 0)
                 return "晴";
             if (code <= 3)

@@ -54,11 +54,27 @@ namespace ClearDesk
         public List<BoxData> Boxes = new List<BoxData>();
         public List<string> Pins = new List<string>();
         public Dictionary<string, BoxData> Widgets = new Dictionary<string, BoxData>();
+        // 2.1.0 online update
+        public bool AutoUpdateCheck = true;
+        public string UpdateSource = "", SkipVersion = "", LastUpdateCheck = "", RemindAfter = "", UpdateRedirect = "";
+        public List<string> UpdateMirrors = new List<string>();
+        // 2.1.1 weather location: Windows location first, then IP; WeatherManual picks a place by hand (county level).
+        public bool WeatherSystemLocation = true, WeatherManual = false;
+        public string ManualProvince = "", ManualCity = "", ManualDistrict = "", ManualCountry = "CN";
+        public double ManualLat = 0, ManualLon = 0;
+        internal GeoPlace ManualPlace()
+        {
+            if (!WeatherManual) return null;
+            var p = new GeoPlace { Kind = "manual", Province = ManualProvince ?? "", City = ManualCity ?? "", District = ManualDistrict ?? "", CountryCode = ManualCountry ?? "", Source = "手动选择" };
+            if (!(ManualLat == 0 && ManualLon == 0) && Math.Abs(ManualLat) <= 90 && Math.Abs(ManualLon) <= 180) { p.Lat = ManualLat; p.Lon = ManualLon; }
+            return p.Display.Length > 0 || p.HasCoords ? p : null;
+        }
     }
 
     public static class Program
     {
         public static string Base = AppDomain.CurrentDomain.BaseDirectory;
+        internal static string[] LaunchArgs = new string[0];
         public static string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClearDesk");
         public static Settings S;
         public static Application App;
@@ -97,6 +113,7 @@ namespace ClearDesk
                 catch
                 {
                 }
+                try { Directory.CreateDirectory(Data); File.WriteAllText(Path.Combine(Data, "startup-error.txt"), e.ToString()); } catch { }
 
                 MessageBox.Show(e.Message, "ClearDesk 启动失败");
             }
@@ -118,6 +135,11 @@ namespace ClearDesk
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "--apply-update") { UpdateApplier.RunHelper(args); return; }          // 2.1.0: updater helper (runs from a temp copy)
+            if (args.Length > 0 && args[0] == "--update-test-server") { UpdateTestServer.RunBlocking(args); return; }
+            if (args.Length > 0 && args[0] == "--weather-diag") { WeatherDiag.Run(args); return; }          // 2.1.1: diagnose location and weather sources
+            LaunchArgs = args;
+
             Rendering = args.Contains("--lyrics-test") || args.Contains("--weather-test") || args.Contains("--popup-benchmark") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
             Preview = args.Contains("--preview") || Rendering || args.Contains("--integration-test");
             if (Preview)
@@ -131,7 +153,7 @@ namespace ClearDesk
             if (args.Length > 0 && args[0] == "--uninstall")
             {
                 try { DesktopMenu.Unregister(); } catch (Exception e) { Log(e); }
-                try { using (var k = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run", true)) if (k != null) k.DeleteValue("ClearDesk", false); } catch (Exception e) { Log(e); }
+                try { new StartupManager().Disable(); } catch (Exception e) { Log(e); }
                 return;
             }
 
@@ -141,12 +163,20 @@ namespace ClearDesk
             {
                 if (!Preview && InstancePipe.Send(args))
                     return;
+                if (args.Contains("--startup")) return; // duplicate login launch: stay silent
                 MessageBox.Show("ClearDesk 已在运行，请双击通知区域的图标打开设置。", "ClearDesk");
                 return;
             }
 
+            // Run-key launches start in System32; make relative lookups follow the install folder.
+            try { Environment.CurrentDirectory = Base; } catch { }
+            if (!Preview && args.Contains("--startup")) { try { StartupGate.WaitForShell(); } catch (Exception e) { Log(e); } }
             Directory.CreateDirectory(Data);
             Load();
+            if (!Preview)
+            {
+                try { var startup = new StartupManager(); if (startup.Heal()) LogText(startup.Log); } catch (Exception e) { Log(e); }
+            }
             // GPU rendering maps D3D/driver heaps (~150-170 MB private on iGPUs) for a
             // handful of small, mostly static widgets. Default to software rendering.
             if (!S.GpuRendering && Environment.GetEnvironmentVariable("CLEARDESK_GPU") != "1")
@@ -199,6 +229,12 @@ namespace ClearDesk
                 DesktopMenu.Sync();
                 ModernMenu.RepairIfMoved();
             }
+            // 2.1.0: online update — report the last update, undo an interrupted one, then check in the background (delayed, ~every 12 h)
+            if (!Preview || args.Contains("--update-e2e"))
+            {
+                try { if (!args.Contains("--update-e2e")) UpdateService.ReportLastResult(); UpdateService.Housekeeping(); if (!Preview) UpdateService.Start(); } catch (Exception e) { Log(e); }
+                if (args.Contains("--update-e2e")) UpdateE2E.Start();
+            }
             string requested = WidgetCatalog.Requested(args);
             if (requested != null)
                 App.Dispatcher.BeginInvoke(new Action(delegate { NewWidget(requested); }), DispatcherPriority.ApplicationIdle);
@@ -212,7 +248,7 @@ namespace ClearDesk
                 Rebuild();
             }
 
-            if (requested == null && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test"))
+            if (requested == null && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test") && !args.Contains("--update-e2e"))
                 ShowSettings();
             if (args.Contains("--popup-benchmark"))
                 PopupBenchmark.Start();
@@ -335,6 +371,16 @@ namespace ClearDesk
 
             if (S.LaunchpadItems == null)
                 S.LaunchpadItems = new List<string>();
+            if (S.UpdateMirrors == null) S.UpdateMirrors = new List<string>();
+            if (S.UpdateSource == null) S.UpdateSource = "";
+            if (S.SkipVersion == null) S.SkipVersion = "";
+            if (S.ManualProvince == null) S.ManualProvince = "";
+            if (S.ManualCity == null) S.ManualCity = "";
+            if (S.ManualDistrict == null) S.ManualDistrict = "";
+            if (S.ManualCountry == null) S.ManualCountry = "CN";
+            if (S.LastUpdateCheck == null) S.LastUpdateCheck = "";
+            if (S.RemindAfter == null) S.RemindAfter = "";
+            if (S.UpdateRedirect == null) S.UpdateRedirect = "";
             if (S.Boxes.Count == 0)
                 S.Boxes.Add(new BoxData { Desktop = true });
             S.IdleSeconds = Math.Max(3, Math.Min(600, S.IdleSeconds));
@@ -347,15 +393,39 @@ namespace ClearDesk
             }
         }
 
+        static readonly object SaveLock = new object();
+
+        // Serialized (the update check saves from a worker thread) and retried: antivirus or the indexer can hold settings.json open for a moment.
         public static void Save()
         {
-            Directory.CreateDirectory(Data);
-            string temp = Config + ".tmp";
-            File.WriteAllText(temp, new JavaScriptSerializer().Serialize(S));
-            if (File.Exists(Config))
-                File.Replace(temp, Config, Config + ".bak");
-            else
-                File.Move(temp, Config);
+            lock (SaveLock)
+            {
+                Directory.CreateDirectory(Data);
+                string temp = Config + ".tmp";
+                string json = new JavaScriptSerializer().Serialize(S);
+                for (int attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        File.WriteAllText(temp, json);
+                        if (File.Exists(Config))
+                            File.Replace(temp, Config, Config + ".bak");
+                        else
+                            File.Move(temp, Config);
+                        return;
+                    }
+                    catch (IOException)
+                    {
+                        if (attempt >= 5) throw;
+                        System.Threading.Thread.Sleep(40 * (attempt + 1));
+                    }
+                }
+            }
+        }
+
+        internal static void LogText(string text)
+        {
+            try { Directory.CreateDirectory(Data); File.AppendAllText(Path.Combine(Data, "errors.log"), DateTime.Now.ToString("s") + " " + text + Environment.NewLine); } catch { }
         }
 
         public static void Log(Exception e)
@@ -474,6 +544,11 @@ namespace ClearDesk
             };
         }
 
+        internal static void Balloon(string title, string text)
+        {
+            try { if (tray != null) tray.ShowBalloonTip(6000, title, text, Forms.ToolTipIcon.Info); } catch { }
+        }
+
         public static void Quit()
         {
             Quitting = true;
@@ -512,6 +587,7 @@ namespace ClearDesk
 
         static void HandleRemote(string[] args)
         {
+            if (args != null && args.Contains("--startup")) return; // a second autostart launch must not pop the settings window
             string kind = WidgetCatalog.Requested(args);
             if (kind != null) NewWidget(kind);
             else ShowSettings();
@@ -748,13 +824,7 @@ namespace ClearDesk
         {
             if (Preview)
                 return false;
-            try
-            {
-                using (var k = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run"))
-                {
-                    return k != null && k.GetValue("ClearDesk") != null;
-                }
-            }
+            try { return new StartupManager().Enabled; }
             catch (Exception e)
             {
                 Log(e);
@@ -762,17 +832,22 @@ namespace ClearDesk
             }
         }
 
-        static void SetStartup(bool v)
+        // Returns the message to show; ok=false means the setting could not be applied.
+        internal static string SetStartup(bool v, out bool ok)
         {
-            if (Preview)
-                return;
-            using (var k = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Run"))
-            {
-                if (v)
-                    k.SetValue("ClearDesk", "\"" + Path.Combine(Base, "ClearDesk.exe") + "\" --startup");
-                else
-                    k.DeleteValue("ClearDesk", false);
-            }
+            ok = true;
+            if (Preview) return "预览模式：未更改开机自启动。";
+            var manager = new StartupManager();
+            if (!v) { manager.Disable(); return "已关闭开机自启动。"; }
+            string message; ok = manager.Enable(out message); return message;
+        }
+
+        internal static string LastStartupMessage = ""; internal static bool LastStartupOk = true;
+        static void SetStartup(bool v) { bool ok; LastStartupMessage = SetStartup(v, out ok); LastStartupOk = ok; }
+        internal static string StartupDescription()
+        {
+            if (Preview) return "预览模式：不读取也不更改开机自启动。";
+            try { return new StartupManager().Describe(); } catch (Exception e) { Log(e); return "无法读取开机自启动状态。"; }
         }
 
         public static void ShowSettings()
@@ -805,6 +880,8 @@ namespace ClearDesk
                 V2Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V203Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V204Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
+                V210Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
+                V211Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 var d = new DateTime(2026, 10, 19);
                 string lunar = CalendarWindow.Lunar(d);
                 if (string.IsNullOrEmpty(lunar))

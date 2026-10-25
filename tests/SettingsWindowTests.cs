@@ -41,8 +41,10 @@ namespace ClearDesk
                 bool allPages=true;
                 for(int i=0;i<7;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
                 check(allPages,"all seven settings categories (incl. 组件管理) render without losing their cards");
-                window.TestSearch("所在地自动获取"); window.UpdateLayout();
-                check(Children<ComboBox>(window).Count()==0 && Children<TextBlock>(window).Any(t=>t.Text.Contains("无手选城市")),"weather settings expose only automatic location without a manual city selector");
+                window.TestSearch("手动选择区县"); window.UpdateLayout();
+                check(Children<ComboBox>(window).Count()==0 && Children<TextBox>(window).Any(t=>AutomationProperties.GetName(t)=="手动选择所在地") && Children<Button>(window).Any(b=>AutomationProperties.GetName(b)=="搜索所在地") && Children<Button>(window).Any(b=>AutomationProperties.GetName(b)=="恢复自动定位"),"weather settings offer a county-level place search with an automatic-location reset");
+                window.TestSearch("Windows 定位"); window.UpdateLayout();
+                check(Children<CheckBox>(window).Any(c=>AutomationProperties.GetName(c)=="使用 Windows 定位") && Children<Button>(window).Any(b=>AutomationProperties.GetName(b)=="重新定位并刷新天气"),"weather settings expose the Windows location switch and a re-locate button");
                 window.TestSearch("音乐来源"); window.UpdateLayout();
                 check(window.TestCards==1 && Children<ComboBox>(window).Count()==1,"search finds settings outside the selected category");
                 var source=Children<ComboBox>(window).Single(); source.SelectedIndex=1;

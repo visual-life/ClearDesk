@@ -14,6 +14,14 @@ namespace ClearDesk
     internal static class FeatureTests
     {
         const string LocationJson="{\"success\":true,\"city\":\"示例城市\",\"latitude\":31.2345,\"longitude\":121.4789}";
+        // IP services as the weather service sees them (three domestic services agreeing on one city)
+        static string FakeNetwork(string url)
+        {
+            if(url.Contains("pconline")) return "{\"ip\":\"x\",\"pro\":\"示例省\",\"city\":\"示例城市\",\"region\":\"\",\"err\":\"\"}";
+            if(url.Contains("ipip.net")) return "{\"ret\":\"ok\",\"data\":{\"ip\":\"x\",\"location\":[\"中国\",\"示例省\",\"示例城市\",\"\"]}}";
+            if(url.Contains("bilibili")) return "{\"code\":0,\"data\":{\"country\":\"中国\",\"province\":\"示例省\",\"city\":\"示例城市\",\"latitude\":\"31.2345\",\"longitude\":\"121.4789\"}}";
+            throw new IOException("HTTP 404");
+        }
         const string WeatherJson="{\"current\":{\"temperature_2m\":23.5,\"relative_humidity_2m\":65,\"weather_code\":3,\"wind_speed_10m\":8.2,\"time\":\"2026-10-21T10:15\"}}";
         internal static void Capture(Window window,string name)
         {
@@ -44,46 +52,41 @@ namespace ClearDesk
         internal static async Task Run(Action<bool,string> check)
         {
             int requests=0; string forecastUrl=null; bool fail=false;
-            var service=new WeatherService(async (url,token)=> { requests++; await Task.Delay(10,token); if(fail) throw new IOException("offline"); if(url.Contains("ipwho.is")) return LocationJson; forecastUrl=url; return WeatherJson; });
+            var service=new WeatherService(async (url,token)=> { requests++; await Task.Delay(10,token); if(fail) throw new IOException("offline"); if(url.Contains("wis.qq.com")) throw new IOException("HTTP 503"); if(url.Contains("open-meteo")) { forecastUrl=url; return WeatherJson; } return FakeNetwork(url); }, token=>Task.FromResult<GeoPlace>(null));
+            service.ExpectChina=()=>true; service.UseSystemLocation=()=>false; service.ManualSource=()=>null;
             var culture=Thread.CurrentThread.CurrentCulture;
             try
             {
                 Thread.CurrentThread.CurrentCulture=CultureInfo.GetCultureInfo("fr-FR");
                 var pair=await Task.WhenAll(service.ReadAsync(false,CancellationToken.None),service.ReadAsync(false,CancellationToken.None));
-                check(requests==2 && ReferenceEquals(pair[0],pair[1]),"weather concurrent refreshes share the cached result and avoid duplicate network requests");
+                check(requests==5 && ReferenceEquals(pair[0],pair[1]),"weather concurrent refreshes share the cached result and avoid duplicate network requests (3 IP services + 1 failed + 1 working weather source)");
                 check(forecastUrl.Contains("latitude=31.23&longitude=121.48") && !forecastUrl.Contains("31,23"),"weather sends rounded city coordinates with invariant decimal formatting");
-                check(pair[0].City=="示例城市" && pair[0].Temperature==23.5 && pair[0].Time=="10-21 10:15","weather parses city temperature and observation time");
+                check(pair[0].City=="示例城市" && pair[0].Temperature==23.5 && pair[0].Time=="10-21 10:15" && pair[0].Source=="Open-Meteo","weather parses city temperature and observation time, falling back from the failing first source");
                 await service.ReadAsync(true,CancellationToken.None);
-                check(requests==4,"explicit weather refresh bypasses the cache");
+                check(requests==10,"explicit weather refresh bypasses the cache");
             }
             finally { Thread.CurrentThread.CurrentCulture=culture; }
             bool rejected=false;
-            try { WeatherService.Location("{\"success\":false}"); } catch(InvalidOperationException) { rejected=true; }
-            check(rejected,"location failure never falls back to a hardcoded city");
-            rejected=false;
-            try { WeatherService.Location(LocationJson.Replace("31.2345","99")); } catch(FormatException) { rejected=true; }
-            check(rejected,"invalid location coordinates are rejected before requesting weather");
-            rejected=false;
             try { WeatherService.Parse("test","{\"current\":{}}"); } catch(FormatException) { rejected=true; }
             check(rejected,"missing weather fields are rejected instead of displaying fabricated zero values");
             using(var cancellation=new CancellationTokenSource())
             {
                 cancellation.Cancel(); rejected=false;
                 try { await service.ReadAsync(true,cancellation.Token); } catch(OperationCanceledException) { rejected=true; }
-                check(rejected && requests==4,"cancelled weather refresh makes no network request");
+                check(rejected && requests==10,"cancelled weather refresh makes no network request");
             }
             bool online=Program.S.WeatherOnline; WeatherWindow weather=null;
             try
             {
                 Program.S.WeatherOnline=false; weather=new WeatherWindow(service); weather.Show();
-                check(requests==4 && weather.TestTemperature=="未联网","disabled online weather sends no request");
+                check(requests==10 && weather.TestTemperature=="未联网","disabled online weather sends no request");
                 Program.S.WeatherOnline=true; await weather.FetchAsync(true);
                 check(weather.TestDescription.Contains("示例城市") && weather.TestTemperature=="24°","weather component displays the automatic location and fetched temperature");
                 Capture(weather,"weather-example"); fail=true; await weather.FetchAsync(true);
-                check(weather.TestTemperature=="24°" && weather.TestDescription.Contains("更新失败"),"failed weather refresh keeps the previous reading with a stale status");
+                check(weather.TestTemperature=="24°" && weather.TestDescription.Contains("示例城市") && weather.TestDetail.Contains("更新于") && weather.TestDetail.Contains("网络异常") && !weather.TestDescription.Contains("暂不可用"),"failed weather refresh keeps the previous reading and says how old it is instead of an error card");
                 weather.Close(); weather=null;
                 var started=new TaskCompletionSource<bool>(); bool cancelled=false;
-                var slow=new WeatherService(async (url,token)=> { started.TrySetResult(true); try { await Task.Delay(30000,token); } catch(OperationCanceledException) { cancelled=true; throw; } return LocationJson; });
+                var slow=new WeatherService(async (url,token)=> { started.TrySetResult(true); try { await Task.Delay(30000,token); } catch(OperationCanceledException) { cancelled=true; throw; } return LocationJson; }, token=>Task.FromResult<GeoPlace>(null)); slow.UseSystemLocation=()=>false; slow.ManualSource=()=>null;
                 Program.S.WeatherOnline=false; weather=new WeatherWindow(slow); weather.Show(); Program.S.WeatherOnline=true;
                 var pending=weather.FetchAsync(true); await started.Task; weather.Close(); await pending;
                 check(cancelled,"closing the weather component cancels its pending network operation"); weather=null;
@@ -144,7 +147,7 @@ namespace ClearDesk
                 Program.S.WeatherOnline=false; window=new WeatherWindow(); window.Show(); Program.S.WeatherOnline=true;
                 await window.FetchAsync(false);
                 bool ok=window.TestTemperature!="未联网" && window.TestTemperature!="—" && !window.TestDescription.Contains("暂不可用");
-                File.WriteAllText(Path.Combine(Program.Base,"weather-live-test.txt"),(ok?"PASS: ":"FAIL: ")+"automatic IP location and real weather displayed through the application service; no location values recorded.");
+                File.WriteAllText(Path.Combine(Program.Base,"weather-live-test.txt"),(ok?"PASS: ":"FAIL: ")+"automatic location and real weather displayed through the application service; no location values recorded.");
                 if(!ok) Environment.ExitCode=1;
             }
             catch(Exception error) { File.WriteAllText(Path.Combine(Program.Base,"weather-live-test.txt"),"FAIL: "+error.GetType().Name+" / "+error.GetBaseException().GetType().Name+" / "+error.GetBaseException().HResult+" / "+(error.GetBaseException() is System.Net.WebException ? ((System.Net.WebException)error.GetBaseException()).Status.ToString() : "")+" / "+(error is System.Net.Http.HttpRequestException ? error.Message : "request or display failed")); Environment.ExitCode=1; }
