@@ -42,7 +42,7 @@ namespace ClearDesk
 
             check(WidgetCatalog.Requested(new[] { "--new-widget", "note" }) == "note" && WidgetCatalog.Requested(new[] { "--startup", "--new-widget", "CLOCK" }) == "clock", "new-widget argument is parsed case-insensitively");
             check(WidgetCatalog.Requested(new[] { "--new-widget", "..\\evil" }) == null && WidgetCatalog.Requested(new[] { "--new-widget" }) == null && WidgetCatalog.Requested(null) == null, "unknown or missing widget kinds are rejected");
-            check(WidgetCatalog.Kinds.Length == 9 && WidgetCatalog.Kinds[0].Key == "note" && WidgetCatalog.Kinds.All(k => WidgetCatalog.IsKnown(k.Key)), "widget catalog lists 9 kinds (incl. 快捷控制) with 便签 first");
+            check(WidgetCatalog.Kinds.Length == 17 && WidgetCatalog.Kinds[0].Key == "note" && WidgetCatalog.Kinds.All(k => WidgetCatalog.IsKnown(k.Key)), "widget catalog lists 17 kinds (9 + 8 tool widgets in 2.2.0) with 便签 first");
             check(DesktopMenu.Command(@"C:\A B\ClearDesk.exe", "note") == "\"C:\\A B\\ClearDesk.exe\" --new-widget note", "desktop menu command quotes the exe path");
 
             string root = @"Software\ClearDeskSelfTest\DesktopBackground\Shell\ClearDesk";

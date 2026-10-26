@@ -248,6 +248,7 @@ namespace ClearDesk
                 await V209Tests.Run(Check);
                 await V210Tests.Run(Check);
                 await V211Tests.Run(Check);
+                await V220Tests.Run(Check);
                 results.Add("INFO: visibility uses real window handles with deterministic dispatch; foreground hook registration is self-tested, interactive browser switching was not rechecked.");
                 visibility.Dispose();
                 visibility = null;

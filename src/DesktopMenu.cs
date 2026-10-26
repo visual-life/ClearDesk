@@ -23,6 +23,14 @@ namespace ClearDesk
             new KeyValuePair<string, string>("almanac", "黄历 / 农历"),
             new KeyValuePair<string, string>("performance", "性能"),
             new KeyValuePair<string, string>("quick", "快捷控制"),
+            new KeyValuePair<string, string>("todo", "待办清单"),
+            new KeyValuePair<string, string>("countdown", "倒计时 / 番茄钟"),
+            new KeyValuePair<string, string>("schedule", "日程"),
+            new KeyValuePair<string, string>("clipboard", "剪贴板历史"),
+            new KeyValuePair<string, string>("netspeed", "网速流量"),
+            new KeyValuePair<string, string>("launcher", "快捷启动"),
+            new KeyValuePair<string, string>("album", "图片相册"),
+            new KeyValuePair<string, string>("sunair", "日出日落 / 空气质量"),
         };
 
         public static bool IsKnown(string kind)

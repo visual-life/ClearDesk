@@ -45,6 +45,7 @@ namespace ClearDesk
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
         public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false, LiveDesktopBlur = false;
         public List<BoxData> Notes = new List<BoxData>();
+        public List<string> ToolWidgets = new List<string>();   // 2.2.0: which of the new widgets are on
         public List<string> LaunchpadItems = new List<string>();
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
@@ -137,6 +138,8 @@ namespace ClearDesk
 
             if (args.Length > 0 && args[0] == "--apply-update") { UpdateApplier.RunHelper(args); return; }          // 2.1.0: updater helper (runs from a temp copy)
             if (args.Length > 0 && args[0] == "--update-test-server") { UpdateTestServer.RunBlocking(args); return; }
+            if (args.Length > 0 && args[0] == "--dock-activate") { DockDiag.Activate(args); return; }       // 2.2.0: run the Dock's restore code on one running app (verification)
+            if (args.Length > 0 && args[0] == "--dock-diag") { DockDiag.Run(args); return; }                // 2.2.0: list the windows the Dock sees and which are elevated
             if (args.Length > 0 && args[0] == "--weather-diag") { WeatherDiag.Run(args); return; }          // 2.1.1: diagnose location and weather sources
             LaunchArgs = args;
 
@@ -336,6 +339,8 @@ namespace ClearDesk
                 S.Boxes = new List<BoxData>();
             if (S.Pins == null)
                 S.Pins = new List<string>();
+            if (S.ToolWidgets == null)
+                S.ToolWidgets = new List<string>();
             if (S.Notes == null)
                 S.Notes = new List<BoxData>();
             if (S.Widgets == null)
@@ -581,6 +586,8 @@ namespace ClearDesk
                 AddWindow(new MusicWindow());
             if (S.QuickControls)
                 AddWindow(new QuickControlWindow());
+            foreach (var kind in (S.ToolWidgets ?? new List<string>()).ToArray())
+            { var tw = ToolWidgets.Create(kind); if (tw != null) AddWindow(tw); }
             foreach (var n in S.Notes.Where(n => n.Enabled).ToArray())
                 AddWindow(new NoteWindow(n));
         }
@@ -637,7 +644,9 @@ namespace ClearDesk
                 case "calendar": S.Calendar = true; match = w => w is CalendarWindow && w.ExportName == "calendar"; create = () => new CalendarWindow(false); break;
                 case "quick": S.QuickControls = true; match = w => w is QuickControlWindow; create = () => new QuickControlWindow(); break;
                 case "almanac": S.Almanac = true; match = w => w is CalendarWindow && w.ExportName == "almanac"; create = () => new CalendarWindow(true); break;
-                default: S.Performance = true; match = w => w is PerformanceWindow; create = () => new PerformanceWindow(); break;
+                default:
+                    if (ToolWidgets.IsTool(kind)) { ToolWidgets.Set(kind, true); match = w => w.ExportName == kind; create = () => ToolWidgets.Create(kind); break; }
+                    S.Performance = true; match = w => w is PerformanceWindow; create = () => new PerformanceWindow(); break;
             }
             BoxData state;
             if (S.Widgets.TryGetValue(kind, out state)) state.Enabled = true;
@@ -882,6 +891,7 @@ namespace ClearDesk
                 V204Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V210Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 V211Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
+                V220Tests.Rules(delegate(bool ok, string label) { if (!ok) throw new Exception(label); results.Add("PASS: " + label); });
                 var d = new DateTime(2026, 10, 19);
                 string lunar = CalendarWindow.Lunar(d);
                 if (string.IsNullOrEmpty(lunar))

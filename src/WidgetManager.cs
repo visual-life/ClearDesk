@@ -24,7 +24,7 @@ namespace ClearDesk
 
     internal static class WidgetManager
     {
-        internal static readonly string[] Singletons = { "clock", "weather", "music", "calendar", "almanac", "performance", "quick" };
+        internal static readonly string[] Singletons = { "clock", "weather", "music", "calendar", "almanac", "performance", "quick", "todo", "countdown", "schedule", "clipboard", "netspeed", "launcher", "album", "sunair" };
 
         internal static string KindName(string kind)
         {
@@ -51,7 +51,7 @@ namespace ClearDesk
                 case "performance": return s.Performance;
                 case "quick": return s.QuickControls;
             }
-            return false;
+            return ToolWidgets.IsTool(kind) && ToolWidgets.On(kind);
         }
 
         static void SetSingleton(string kind, bool on)
@@ -66,6 +66,7 @@ namespace ClearDesk
                 case "almanac": s.Almanac = on; break;
                 case "performance": s.Performance = on; break;
                 case "quick": s.QuickControls = on; break;
+                default: if (ToolWidgets.IsTool(kind)) ToolWidgets.Set(kind, on); break;
             }
         }
 
