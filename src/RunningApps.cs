@@ -12,6 +12,8 @@ namespace ClearDesk
     internal sealed class AppIdentity
     {
         public string Key, Exe, AppId, LaunchPath, Name;
+        /// <summary>2.2.3: for an app hosted by ApplicationFrameHost (UWP), the executable of the app itself (the host's own icon is a blank window).</summary>
+        public string RealExe;
         public static string Normalize(string path)
         {
             try
@@ -62,6 +64,13 @@ namespace ClearDesk
             {
                 return Running != null && Running.Windows.Count > 0;
             }
+        }
+
+        /// <summary>What the icon lookup needs for an app that is not pinned.</summary>
+        internal AppIconRequest IconRequest()
+        {
+            var i = Identity;
+            return new AppIconRequest { Exe = i.RealExe ?? i.Exe, AppId = i.AppId, Name = i.Name, LaunchPath = i.LaunchPath, Windows = Running == null ? new IntPtr[0] : Running.Windows.Take(4).ToArray() };
         }
 
         public string IconPath
@@ -120,6 +129,36 @@ namespace ClearDesk
             var id = ShellIdentity.WindowAppId(window);
             windowMetadata[window] = new WindowMetadata { Pid=pid, AppId=id, Expires=DateTime.UtcNow.AddSeconds(10) };
             return id;
+        }
+        // 2.2.3: UWP windows belong to ApplicationFrameHost.exe; the app itself runs in another process whose CoreWindow is a child of the frame window
+        sealed class HostedApp { internal AppIdentity Real; internal DateTime Expires; }
+        readonly Dictionary<IntPtr, HostedApp> hosted = new Dictionary<IntPtr, HostedApp>();
+        [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, Native.EnumProc callback, IntPtr parameter);
+        internal Func<IntPtr, uint, AppIdentity> HostedLookup;
+        AppIdentity RealApp(IntPtr frame, uint hostPid)
+        {
+            HostedApp c;
+            if (hosted.TryGetValue(frame, out c) && c.Expires > DateTime.UtcNow) return c.Real;
+            AppIdentity real = null;
+            try
+            {
+                if (HostedLookup != null) real = HostedLookup(frame, hostPid);
+                else
+                {
+                    uint found = 0;
+                    EnumChildWindows(frame, delegate (IntPtr child, IntPtr unused)
+                    {
+                        uint cp; Native.GetWindowThreadProcessId(child, out cp);
+                        if (cp != 0 && cp != hostPid && cp != ownPid && Native.Class(child) == "Windows.UI.Core.CoreWindow") { found = cp; return false; }
+                        return true;
+                    }, IntPtr.Zero);
+                    if (found != 0) real = ProcessIdentity(found);
+                }
+            }
+            catch { }
+            if (hosted.Count > 128) hosted.Clear();
+            hosted[frame] = new HostedApp { Real = real, Expires = DateTime.UtcNow.AddSeconds(real != null ? 60 : 3) };
+            return real;
         }
         readonly uint ownPid = (uint)Process.GetCurrentProcess().Id;
         readonly Dictionary<uint, KeyValuePair<DateTime, List<string>>> ancestors = new Dictionary<uint, KeyValuePair<DateTime, List<string>>>();
@@ -207,16 +246,25 @@ namespace ClearDesk
                     RunningApp app;
                     if (!groups.TryGetValue(key, out app))
                     {
+                        var identity = new AppIdentity
+                        {
+                            Key = key,
+                            Exe = process.Exe,
+                            AppId = id,
+                            LaunchPath = process.LaunchPath,
+                            Name = process.Name
+                        };
+                        if (AppIcons.IsHostExe(process.Exe))
+                        {
+                            var real = RealApp(h, pid);
+                            if (real != null) { identity.RealExe = real.Exe; if (!string.IsNullOrWhiteSpace(real.Name)) identity.Name = real.Name; if (string.IsNullOrEmpty(id)) { id = real.AppId; identity.AppId = id; } }
+                            if (!string.IsNullOrEmpty(id)) identity.LaunchPath = "shell:AppsFolder\\" + id;
+                            string shown = ShellApps.DisplayName(id); if (!string.IsNullOrWhiteSpace(shown)) identity.Name = shown;
+                            if (real == null && string.IsNullOrWhiteSpace(shown)) identity.Name = title.ToString();
+                        }
                         app = new RunningApp
                         {
-                            Identity = new AppIdentity
-                            {
-                                Key = key,
-                                Exe = process.Exe,
-                                AppId = id,
-                                LaunchPath = process.LaunchPath,
-                                Name = process.Name
-                            },
+                            Identity = identity,
                             Title = title.ToString()
                         };
                         groups.Add(key, app);
@@ -234,6 +282,7 @@ namespace ClearDesk
                 return true;
             }, IntPtr.Zero);
             foreach (var handle in windowMetadata.Keys.Where(h => !seen.Contains(h)).ToArray()) windowMetadata.Remove(handle);
+            foreach (var handle in hosted.Keys.Where(h => !seen.Contains(h)).ToArray()) hosted.Remove(handle);
             order.RemoveAll(k => !groups.ContainsKey(k));
             foreach (string key in groups.Keys)
                 if (!order.Contains(key))

@@ -350,9 +350,13 @@ namespace ClearDesk
                     Stretch = Stretch.Uniform
                 };
                 b.Content = image;
-                string icon = entry.Pinned ? entry.PinPath : entry.Identity.Exe ?? entry.IconPath;
-                if (icon != null)
-                    IconCache.Bind(image, icon);
+                // 2.2.3: pinned items use their shortcut / exe; apps that are only running go through the icon chain (package icon for UWP, exe, window icon, Start menu, letter tile)
+                if (entry.Pinned) { string pin = entry.PinPath; string pinName = entry.Title; IconCache.BindWith(image, pin, () => Native.Icon(pin), pinName); }
+                else
+                {
+                    var request = entry.IconRequest(); string shownName = entry.Title;
+                    IconCache.BindWith(image, request.CacheKey, () => { string how; return AppIcons.Resolve(request, out how); }, shownName);
+                }
                 b.ContextMenu = EntryMenu(entry);
                 b.ContextMenu.Closed += delegate
                 {

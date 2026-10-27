@@ -252,6 +252,19 @@ namespace ClearDesk
             return IconByIndex(info.index);
         }
 
+        /// <summary>True when the file's icon is the shell's default "application" icon (an exe with no icon resource of its own).</summary>
+        internal static bool HasGenericIcon(string path)
+        {
+            try
+            {
+                var generic = new SHINFO(); var mine = new SHINFO();
+                if (SHGetFileInfo("x.exe", 0x80, ref generic, (uint)Marshal.SizeOf(generic), 0x4000 | 0x10) == IntPtr.Zero) return false;
+                if (SHGetFileInfo(path, 0, ref mine, (uint)Marshal.SizeOf(mine), 0x4000) == IntPtr.Zero) return false;
+                return mine.index == generic.index;
+            }
+            catch { return false; }
+        }
+
         internal static ImageSource IconByIndex(int index)
         {
             foreach (int size in new[]

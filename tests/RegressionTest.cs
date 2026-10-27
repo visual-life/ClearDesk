@@ -42,6 +42,11 @@ namespace ClearDesk
             try
             {
                 await Task.Delay(1200);
+                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v223")      // developer shortcut: only the 2.2.3 tests
+                {
+                    V223Tests.Rules(Check); await V223Tests.Run(Check);
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v222")      // developer shortcut: only the 2.2.2 tests
                 {
                     V222Tests.Rules(Check); await V222Tests.Run(Check);

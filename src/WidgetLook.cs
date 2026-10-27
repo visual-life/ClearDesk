@@ -148,6 +148,8 @@ namespace ClearDesk
             return null;
         }
 
-        internal static Effect TextShadow() { return new DropShadowEffect { BlurRadius = 7, ShadowDepth = 1, Direction = 270, Opacity = .6, Color = Colors.Black, RenderingBias = RenderingBias.Performance }; }
+        // 2.2.3: a tight shadow (2.2.2 used a 7 px, 60 % blur that smeared thin light text into a dark halo). The values are fields so the tests can reproduce the old look.
+        internal static double ShadowBlur = 2.5, ShadowOpacity = .55; internal static RenderingBias ShadowBias = RenderingBias.Quality;
+        internal static Effect TextShadow() { return new DropShadowEffect { BlurRadius = ShadowBlur, ShadowDepth = 1, Direction = 270, Opacity = ShadowOpacity, Color = Colors.Black, RenderingBias = ShadowBias }; }
     }
 }

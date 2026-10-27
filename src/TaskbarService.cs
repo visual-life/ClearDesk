@@ -16,42 +16,76 @@ namespace ClearDesk
             }
         }
 
+        /// <summary>Folder of the component; tests point it at a scratch copy.</summary>
+        internal string Dir = Path.Combine(Program.Base, "taskbar");
+        internal string Args = "";
+        /// <summary>Test hook: is a stand-alone TranslucentTB already running?</summary>
+        internal Func<bool> ExternalRunning = delegate { return Native.FindWindow("TrayWindow", "TranslucentTB") != IntPtr.Zero; };
+        internal string CacheDir = null;
+        /// <summary>Why the last TryStart failed (null when it started) and whether trying again later can help.</summary>
+        public string Failure { get; private set; }
+        public bool Retryable { get; private set; }
+        public string Repaired { get; private set; }
+
         public string Exe
         {
             get
             {
-                return Path.Combine(Program.Base, "taskbar", "TranslucentTB.exe");
+                return Path.Combine(Dir, "TranslucentTB.exe");
+            }
+        }
+
+        public bool Exited
+        {
+            get
+            {
+                try { return process != null && process.HasExited; } catch { return true; }
+            }
+        }
+
+        /// <summary>Starts the component. Never throws: a missing, locked, replaced or damaged component is repaired from the kept good copy,
+        /// otherwise Failure explains it and ClearDesk simply carries on without the transparent taskbar.</summary>
+        public bool TryStart()
+        {
+            Failure = null; Retryable = false; Repaired = null;
+            try
+            {
+                if (process != null && !process.HasExited)
+                    return true;
+                if (process != null) { process.Dispose(); process = null; }
+                if (ExternalRunning())
+                {
+                    Failure = "已有独立的 TranslucentTB 在运行；请先退出它，再开启此功能，避免改动它的配置。";
+                    Retryable = true;
+                    return false;
+                }
+                string note;
+                var c = TaskbarComponent.Ensure(Dir, CacheDir ?? TaskbarComponent.CacheDir, out note);
+                if (!c.Ok)
+                {
+                    Failure = note ?? c.Text;
+                    Retryable = true;
+                    return false;
+                }
+                Repaired = note;
+                process = Process.Start(new ProcessStartInfo(Exe, Args) { UseShellExecute = false, WorkingDirectory = Dir, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
+                if (process == null) { Failure = "无法启动任务栏组件。"; Retryable = true; return false; }
+                return true;
+            }
+            catch (Exception e)
+            {
+                Failure = "无法启动任务栏组件：" + e.Message;
+                Retryable = true;
+                try { if (process != null) { process.Dispose(); } } catch { }
+                process = null;
+                return false;
             }
         }
 
         public void Start()
         {
-            if (process != null && !process.HasExited)
-                return;
-            var existing = Native.FindWindow("TrayWindow", "TranslucentTB");
-            if (existing != IntPtr.Zero)
-                throw new InvalidOperationException("已有独立的 TranslucentTB 在运行；请先退出它，再开启此功能，避免改动它的配置。");
-            string manifest = Path.Combine(Program.Base, "taskbar", "verified.sha256");
-            if (!File.Exists(manifest))
-                throw new IOException("缺少官方任务栏组件的校验清单。请完整解压新版压缩包。");
-            foreach (string line in File.ReadAllLines(manifest))
-            {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
-                string expected = line.Substring(0, 64);
-                string name = line.Substring(66);
-                if (name.IndexOfAny(new[] { '/', '\\', ':' }) >= 0)
-                    throw new IOException("校验清单文件名无效。");
-                using (var file = File.OpenRead(Path.Combine(Path.GetDirectoryName(Exe), name)))
-                using (var sha = SHA256.Create())
-                {
-                    string hash = BitConverter.ToString(sha.ComputeHash(file)).Replace("-", "");
-                    if (!hash.Equals(expected, StringComparison.OrdinalIgnoreCase))
-                        throw new IOException("任务栏组件校验失败：" + name);
-                }
-            }
-
-            process = Process.Start(new ProcessStartInfo(Exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(Exe), CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
+            if (!TryStart())
+                throw new InvalidOperationException(Failure);
         }
 
         public void Dispose()

@@ -215,7 +215,7 @@ namespace ClearDesk
             {
                 // Crash-safe: if an earlier session (and its guard) died with the top taskbar hidden, bring it back first.
                 try { TopTaskbar.Restore(); } catch (Exception e) { Log(e); }
-                Services.Apply();
+                try { Services.Apply(); } catch (Exception e) { Log(e); LogText("启动时应用桌面服务失败（已忽略，ClearDesk 继续运行）：" + e.Message); }   // 2.2.3: an optional service must never stop ClearDesk from starting
                 if (S.HideAtStart)
                     Services.SetIcons(false, false);
             }

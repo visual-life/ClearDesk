@@ -252,6 +252,25 @@ namespace ClearDesk
                 catch { }
                 return true;
             }, IntPtr.Zero);
+            // 2.2.3: what the icon lookup returns for every app the Dock shows
+            o.AppendLine("\n图标解析（每个正在运行的应用，逐级来源；→ 为最终采用）：");
+            try
+            {
+                using (var apps = new RunningApps())
+                {
+                    apps.Refresh();
+                    foreach (var app in apps.Apps)
+                    {
+                        var i = app.Identity;
+                        o.AppendLine(string.Format("  {0}  exe={1}  真实exe={2}  AppId={3}  启动路径={4}", i.Name, i.Exe, i.RealExe ?? "-", i.AppId ?? "-", i.LaunchPath ?? "-"));
+                        var log = new List<string>(); var request = new DockEntry { Identity = i, Running = app }.IconRequest();
+                        var icon = AppIcons.Trace(request, log, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)), "dock-diag-icons"), i.Name);
+                        foreach (var line in log) o.AppendLine(line);
+                        o.AppendLine(icon == null ? "    结果：全部失败 → 显示首字母图标，之后会重试" : "    结果：已找到图标");
+                    }
+                }
+            }
+            catch (Exception e) { o.AppendLine("图标解析失败：" + e.Message); }
             File.WriteAllText(path, o.ToString(), new UTF8Encoding(false));
         }
     }

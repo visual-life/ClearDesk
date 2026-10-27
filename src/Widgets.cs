@@ -104,9 +104,28 @@ namespace ClearDesk
             base.Width = w;
             base.Height = State.Collapsed && collapsedApplied ? 64 * s : h;
             ExtraWidth = Math.Max(0, w / s - baseW); ExtraHeight = Math.Max(0, h / s - baseH);
-            if (scaler != null) { ApplyEdges(); OnResponsive(ExtraWidth, ExtraHeight); }
+            if (scaler != null) { ApplyEdges(); OnResponsive(ExtraWidth, ExtraHeight); ApplyCrispText(); }
         }
         bool collapsedApplied;
+
+        // ---- 2.2.3 sharp text in scaled widgets (see CrispText)
+        bool crispQueued, crispHooked;
+        internal void ApplyCrispText()
+        {
+            if (scaler == null || Root == null) return;
+            CrispText.Apply(Root, scaler.ScaleX);
+            if (!crispHooked)
+            {
+                crispHooked = true;
+                // text that is added or restyled later (lists, ticking labels, widgets that set a font size in OnResponsive) is picked up after the next layout pass
+                Root.LayoutUpdated += delegate
+                {
+                    if (crispQueued || scaler == null || !CrispText.Needed(scaler.ScaleX) || CrispText.TestDisable) return;
+                    crispQueued = true;
+                    Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate { crispQueued = false; if (scaler != null) CrispText.Apply(Root, scaler.ScaleX); }));
+                };
+            }
+        }
 
         /// <summary>Called whenever the layout gains or loses room; widgets re-flow here.</summary>
         protected virtual void OnResponsive(double extraW, double extraH) { }
