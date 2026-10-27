@@ -142,6 +142,14 @@ namespace ClearDesk
             };
         }
 
+        /// <summary>Loads the icon of one item again (a recycle bin that was emptied or filled).</summary>
+        public void RefreshIcon(string path)
+        {
+            var tile = tiles.FirstOrDefault(t => string.Equals(t.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (tile == null) return;
+            IconCache.Forget(path); IconCache.Bind(tile.Icon, path);
+        }
+
         public void SetItems(IEnumerable<string> paths, bool list = false)
         {
             listMode = list;

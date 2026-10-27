@@ -45,7 +45,7 @@ namespace ClearDesk
         double baseW = double.NaN, baseH = double.NaN;
         ScaleTransform scaler;
         Border scaleGrip;
-        internal const double MinScale = .6, MaxScale = 2.5;
+        internal const double MinScale = .6, MaxScale = 4;      // 2.2.2: MaxScale follows the largest size (MaxSizeFactor) so content and frame keep growing together
 
         Border cornerGrip, rightGrip, bottomGrip;
         bool resizing;
@@ -62,7 +62,7 @@ namespace ClearDesk
             get
             {
                 if (!ScalesContent || !HasCustomSize || double.IsNaN(baseW) || double.IsNaN(baseH) || baseW <= 0 || baseH <= 0) return 1;
-                return Clamp(Math.Min(CustomW / baseW, CustomH / baseH));
+                return WidgetLook.ContentScale(CustomW, CustomH, baseW, baseH, MinScale, MaxScale);
             }
         }
         double CustomW { get { return State.CustomW > 0 ? State.CustomW : baseW; } }
@@ -104,7 +104,7 @@ namespace ClearDesk
             base.Width = w;
             base.Height = State.Collapsed && collapsedApplied ? 64 * s : h;
             ExtraWidth = Math.Max(0, w / s - baseW); ExtraHeight = Math.Max(0, h / s - baseH);
-            if (scaler != null) OnResponsive(ExtraWidth, ExtraHeight);
+            if (scaler != null) { ApplyEdges(); OnResponsive(ExtraWidth, ExtraHeight); }
         }
         bool collapsedApplied;
 
@@ -232,7 +232,9 @@ namespace ClearDesk
             FontFamily = new FontFamily("Microsoft YaHei UI");
             Foreground = Brushes.White;
             var wa = SystemParameters.WorkArea;
-            if (!System.Windows.Forms.Screen.AllScreens.Any(s => s.WorkingArea.Contains((int)Left + 30, (int)Top + 30)))
+            // 2.2.2: the saved position stays in State; this only moves the window into view (it used to compare DIPs with pixels and a work area that the
+            // top taskbar changes). Dragging the widget later saves the new place.
+            if (!PositionGuard.Reachable(new Point(Left, Top), PositionGuard.Screens(null)))
             {
                 Left = wa.Left + 20;
                 Top = wa.Top + 20;
@@ -328,12 +330,13 @@ namespace ClearDesk
             LocationChanged += delegate
             {
                 UpdatePaper();
-                if (ready)
+                if (ready && !restoring)
                 {
-                    State.X = Left;
-                    State.Y = Top;
+                    if (PositionGuard.IsSystemMove(dragging, Mouse.LeftButton == MouseButtonState.Pressed, DateTime.UtcNow < settleUntil)) ScheduleReassert();
+                    else { State.X = Left; State.Y = Top; }
                 }
             };
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += displayChanged = delegate { try { Dispatcher.BeginInvoke(new Action(NoteSystemChange)); } catch { } };
             MouseLeftButtonUp += delegate
             {
                 if (ready)
@@ -346,9 +349,18 @@ namespace ClearDesk
                 UpdatePaper();
             };
             ContextMenu = Menu();
+            ApplyLook();
+            if (AcceptsBackgroundDrop)
+            {
+                AllowDrop = true;
+                DragOver += delegate (object sender, DragEventArgs e) { e.Effects = WidgetLook.Droppable(e.Data) ? DragDropEffects.Copy : DragDropEffects.None; e.Handled = true; };
+                Drop += delegate (object sender, DragEventArgs e) { if (DropBackground(e.Data)) Toast("\uE710", "已设置背景"); e.Handled = true; };
+            }
             Loaded += delegate
             {
                 ready = true;
+                ApplyEdges();
+                if (!Program.Preview) settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.SettleMs);
                 SetCollapsed();
                 UpdatePaper();
                 var h = new WindowInteropHelper(this).Handle;
@@ -356,14 +368,195 @@ namespace ClearDesk
                     Native.SetLong(h, -20, new IntPtr(Native.GetLong(h, -20).ToInt64() | 0x80));
                 Native.SetWindowPos(h, new IntPtr(Topmost ? -1 : 1), 0, 0, 0, 0, 0x13);
                 var source = HwndSource.FromHwnd(h);
-                if (source != null) source.AddHook(PinHook);
+                if (source != null) { source.AddHook(PinHook); source.AddHook(SystemChangeHook); }
             };
             Closed += delegate
             {
+                if (displayChanged != null) Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= displayChanged;
+                if (reassert != null) reassert.Stop();
                 WasClosed = true;
                 if (Timer != null)
                     Timer.Stop();
             };
+        }
+
+        // ---- 2.2.2 look: edge metrics, 无边框, custom background ----
+        double edgeDelta; bool framelessApplied;
+        internal double EdgeFactorNow { get { return WidgetLook.EdgeFactor(ExtraWidth, ExtraHeight, double.IsNaN(baseW) ? 1 : baseW, double.IsNaN(baseH) ? 1 : baseH); } }
+        /// <summary>The outer padding grows with the room the content scale cannot use (tall / wide widgets). Only widgets that have a padding at all take part.</summary>
+        void ApplyEdges()
+        {
+            if (!IsLoaded || Layout == null) return;
+            double delta = WidgetLook.Pad(EdgeFactorNow) - WidgetLook.PadBase;
+            if (Math.Abs(delta - edgeDelta) < .01) return;
+            var m = Layout.Margin; double l = m.Left - edgeDelta, t = m.Top - edgeDelta, r = m.Right - edgeDelta, b = m.Bottom - edgeDelta;
+            if (l < 10 && t < 10) { edgeDelta = 0; return; }
+            Layout.Margin = new Thickness(l + delta, t + delta, r + delta, b + delta); edgeDelta = delta;
+        }
+        internal bool SupportsLook { get { return !(this is DockWindow || this is LaunchpadWindow); } }
+        internal bool SupportsFrameless { get { return SupportsLook && !(this is NoteWindow); } }
+        protected virtual bool AcceptsBackgroundDrop { get { return !(this is AlbumWindow || this is OrganizerWindow || this is NoteWindow || this is LauncherWindow || this is DockWindow || this is LaunchpadWindow); } }
+        Grid bgLayer; Border bgPicture; Border bgDimmer; Brush rootBackground; string bgLoaded;
+        internal bool IsFrameless { get { return State.Frameless && SupportsFrameless; } }
+        internal bool HasBackgroundImage { get { return bgLayer != null && bgPicture != null && PictureBrush.ImageSource != null; } }
+        ImageBrush PictureBrush { get { return (ImageBrush)bgPicture.Background; } }
+        internal Border TestBackgroundImage { get { return bgPicture; } }
+        internal ImageBrush TestBackgroundBrush { get { return bgPicture == null ? null : PictureBrush; } }
+        internal Border TestFrame { get { return Frame; } }
+        internal Panel TestLayout { get { return Layout; } }
+        internal Panel TestRoot { get { return Root; } }
+
+        /// <summary>Applies Frameless / TextShadow / background picture from the saved state. Safe to call at any time.</summary>
+        internal void ApplyLook()
+        {
+            if (!SupportsLook || Frame == null) return;
+            bool frameless = IsFrameless;
+            if (frameless || framelessApplied)
+            {
+                if (!framelessApplied) rootBackground = Root.Background;
+                if (Surface != null) Surface.Visibility = frameless ? Visibility.Collapsed : Visibility.Visible;
+                Frame.BorderThickness = frameless ? new Thickness(0) : new Thickness(Surface != null || State.MaterialSelected ? 1 : 0);
+                Root.Background = frameless ? new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) : rootBackground;       // still catches the pointer (drag) with nothing painted
+                Layout.Effect = frameless && !State.NoTextShadow ? WidgetLook.TextShadow() : null;
+                framelessApplied = frameless;
+            }
+            // background picture
+            string path = ResolveBackground();
+            if (path == null) { if (bgLayer != null) { Root.Children.Remove(bgLayer); bgLayer = null; bgPicture = null; bgDimmer = null; } bgLoaded = null; return; }
+            if (bgLayer == null)
+            {
+                bgPicture = new Border { IsHitTestVisible = false, Background = new ImageBrush { AlignmentX = AlignmentX.Center, AlignmentY = AlignmentY.Center, Stretch = Stretch.UniformToFill } };
+                RenderOptions.SetBitmapScalingMode(bgPicture, BitmapScalingMode.HighQuality);
+                bgDimmer = new Border { IsHitTestVisible = false };
+                bgLayer = new Grid { IsHitTestVisible = false, ClipToBounds = true };
+                bgLayer.Children.Add(bgPicture); bgLayer.Children.Add(bgDimmer);
+                int at = Root.Children.IndexOf(Layout); Root.Children.Insert(at < 0 ? 0 : at, bgLayer);
+            }
+            if (bgLoaded != path) { PictureBrush.ImageSource = WidgetLook.Load(path); bgLoaded = path; if (PictureBrush.ImageSource == null) { bgLayer.Visibility = Visibility.Collapsed; return; } }
+            bgLayer.Visibility = Visibility.Visible;
+            PictureBrush.Stretch = WidgetLook.StretchFor(State.BgFit); bgPicture.Opacity = WidgetLook.ClampOpacity(State.BgOpacity);
+            bgDimmer.Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(WidgetLook.ClampDim(State.BgDim) * 255), 0, 0, 0));
+        }
+        string ResolveBackground()
+        {
+            if (string.IsNullOrEmpty(State.BgImage)) return null;
+            string p = Path.IsPathRooted(State.BgImage) ? State.BgImage : Path.Combine(WidgetLook.Folder, State.BgImage);
+            return File.Exists(p) ? p : null;
+        }
+        internal void SetFrameless(bool on) { State.Frameless = on; ApplyLook(); Program.Save(); }
+        internal void SetTextShadow(bool on) { State.NoTextShadow = !on; ApplyLook(); Program.Save(); }
+        internal bool SetBackground(string storedPath)
+        {
+            if (storedPath == null) return false;
+            string old = ResolveBackground();
+            State.BgImage = Path.GetFileName(storedPath); if (string.IsNullOrEmpty(State.BgFit)) State.BgFit = "cover";
+            if (State.BgOpacity <= 0) State.BgOpacity = 1;
+            bgLoaded = null; ApplyLook(); Program.Save();
+            WidgetLook.Prune(State.Id, storedPath);
+            return HasBackgroundImage;
+        }
+        internal bool SetBackgroundFile(string file) { return SetBackground(WidgetLook.CopyIn(State.Id, file)); }
+        internal bool SetBackgroundBitmap(BitmapSource bmp) { return SetBackground(WidgetLook.CopyIn(State.Id, bmp)); }
+        internal void ClearBackground()
+        {
+            string old = ResolveBackground(); State.BgImage = ""; ApplyLook(); Program.Save();
+            WidgetLook.Prune(State.Id, null);
+        }
+        internal void SetBackgroundFit(string fit) { State.BgFit = WidgetLook.NormalizeFit(fit); ApplyLook(); Program.Save(); }
+        internal void SetBackgroundOpacity(double v) { State.BgOpacity = WidgetLook.ClampOpacity(v); ApplyLook(); Program.Save(); }
+        internal void SetBackgroundDim(double v) { State.BgDim = WidgetLook.ClampDim(v); ApplyLook(); Program.Save(); }
+        internal Func<string> BackgroundDialog;      // test hook
+        internal void PickBackground()
+        {
+            string name;
+            if (BackgroundDialog != null) name = BackgroundDialog();
+            else using (var host = new DialogHost())
+            {
+                var d = new Microsoft.Win32.OpenFileDialog { Title = "选择背景图片", Filter = "图片|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.jfif|所有文件|*.*" };
+                name = d.ShowDialog(host.Owner) == true ? d.FileName : null;
+            }
+            if (name == null) return;
+            if (!SetBackgroundFile(name)) Toast("\uE783", "无法使用这张图片");
+        }
+        internal bool PasteBackground()
+        {
+            var bmp = WidgetLook.ClipboardImage();
+            if (bmp != null && SetBackgroundBitmap(bmp)) { Toast("\uE710", "已设置背景"); return true; }
+            if (WidgetLook.ClipboardFiles().Where(f => AlbumLogic.IsImage(f)).Any(f => SetBackgroundFile(f))) { Toast("\uE710", "已设置背景"); return true; }
+            Toast("\uE783", "剪贴板里没有图片"); return false;
+        }
+        internal bool DropBackground(IDataObject d)
+        {
+            try
+            {
+                var files = d.GetDataPresent(DataFormats.FileDrop) ? d.GetData(DataFormats.FileDrop) as string[] : null;
+                if (files != null) return files.Where(x => AlbumLogic.IsImage(x)).Any(x => SetBackgroundFile(x));
+                var bmp = WidgetLook.BitmapFrom(d); return bmp != null && SetBackgroundBitmap(bmp);
+            }
+            catch (Exception e) { Program.Log(e); return false; }
+        }
+        void AddLookMenu(ContextMenu c, int at)
+        {
+            if (!SupportsLook) return;
+            var bg = new MenuItem { Header = "自定义背景" };
+            var pick = Item("选择图片…", PickBackground);
+            var paste = Item("从剪贴板粘贴", delegate { PasteBackground(); });
+            var fit = new MenuItem { Header = "填充方式" };
+            foreach (var f in WidgetLook.Fits) { string id = f; var it = Item(WidgetLook.FitName(f), delegate { SetBackgroundFit(id); }); it.Tag = id; fit.Items.Add(it); }
+            var opacity = new MenuItem { Header = "图片不透明度" };
+            foreach (var o in new[] { 100, 80, 60, 40, 20 }) { int v = o; var it = Item(v + "%", delegate { SetBackgroundOpacity(v / 100.0); }); it.Tag = v; opacity.Items.Add(it); }
+            var dim = new MenuItem { Header = "压暗（让文字更清楚）" };
+            foreach (var o in new[] { 0, 15, 25, 40, 60 }) { int v = o; var it = Item(v == 0 ? "不压暗" : v + "%", delegate { SetBackgroundDim(v / 100.0); }); it.Tag = v; dim.Items.Add(it); }
+            var remove = Item("移除背景", ClearBackground);
+            bg.Items.Add(pick); bg.Items.Add(paste); bg.Items.Add(new Separator()); bg.Items.Add(fit); bg.Items.Add(opacity); bg.Items.Add(dim); bg.Items.Add(new Separator()); bg.Items.Add(remove);
+            bg.SubmenuOpened += delegate
+            {
+                bool has = !string.IsNullOrEmpty(State.BgImage);
+                fit.IsEnabled = opacity.IsEnabled = dim.IsEnabled = remove.IsEnabled = has;
+                foreach (MenuItem it in fit.Items.OfType<MenuItem>()) it.IsChecked = (string)it.Tag == WidgetLook.NormalizeFit(State.BgFit);
+                foreach (MenuItem it in opacity.Items.OfType<MenuItem>()) it.IsChecked = Math.Abs((int)it.Tag / 100.0 - WidgetLook.ClampOpacity(State.BgOpacity)) < .02;
+                foreach (MenuItem it in dim.Items.OfType<MenuItem>()) it.IsChecked = Math.Abs((int)it.Tag / 100.0 - WidgetLook.ClampDim(State.BgDim)) < .02;
+            };
+            c.Items.Insert(at, bg);
+            if (SupportsFrameless)
+            {
+                var frameless = Item("无边框 / 透明背景", delegate { SetFrameless(!State.Frameless); });
+                var shadow = Item("文字阴影（无边框时）", delegate { SetTextShadow(State.NoTextShadow); });
+                frameless.ToolTip = "只显示内容，不画外框、面板和模糊；仍可拖动、调整大小和锁定";
+                c.Items.Insert(at + 1, frameless); c.Items.Insert(at + 2, shadow);
+                c.Opened += delegate { frameless.IsChecked = State.Frameless; shadow.IsChecked = !State.NoTextShadow; shadow.IsEnabled = State.Frameless; };
+            }
+        }
+
+        // ---- 2.2.2 position stability (see PositionGuard) ----
+        DateTime settleUntil; bool restoring; EventHandler displayChanged; System.Windows.Threading.DispatcherTimer reassert;
+        internal int PositionRestores;
+        /// <summary>The system is changing displays / scaling / work area: for a moment location changes that the user did not make are not saved, then undone.</summary>
+        internal void NoteSystemChange() { settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.ChangeMs); ScheduleReassert(); }
+        void ScheduleReassert()
+        {
+            if (WasClosed) return;
+            if (reassert == null)
+            {
+                reassert = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background);
+                reassert.Tick += delegate
+                {
+                    reassert.Stop();
+                    if (WasClosed || dragging || Mouse.LeftButton == MouseButtonState.Pressed) return;
+                    if (DateTime.UtcNow < settleUntil) { reassert.Interval = settleUntil - DateTime.UtcNow + TimeSpan.FromMilliseconds(50); reassert.Start(); return; }
+                    var at = PositionGuard.Reassert(new Point(State.X, State.Y), new Point(Left, Top), PositionGuard.Screens(this));
+                    if (!at.HasValue) return;
+                    restoring = true;
+                    try { Left = at.Value.X; Top = at.Value.Y; PositionRestores++; } finally { restoring = false; }
+                };
+            }
+            reassert.Stop();
+            reassert.Interval = TimeSpan.FromMilliseconds(PositionGuard.ReassertMs); reassert.Start();
+        }
+        IntPtr SystemChangeHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == 0x2E0 || msg == 0x7E || msg == 0x1A) NoteSystemChange();      // WM_DPICHANGED, WM_DISPLAYCHANGE, WM_SETTINGCHANGE
+            return IntPtr.Zero;
         }
 
         void UpdatePaper()
@@ -422,6 +615,7 @@ namespace ClearDesk
                 frost.IsChecked = State.Material == "frosted";
             };
             c.Items.Add(material);
+            AddLookMenu(c, c.Items.Count);
             c.Items.Add(Item("收缩 / 展开", delegate
             {
                 State.Collapsed = !State.Collapsed;
@@ -448,7 +642,7 @@ namespace ClearDesk
             foreach (var kind in WidgetCatalog.Kinds)
             {
                 string id = kind.Key;
-                create.Items.Add(Item(kind.Value, delegate { Program.NewWidget(id); }));
+                create.Items.Add(Item(kind.Value, delegate { Program.NewWidget(id, PlaceMode.LastRightClick); }));
             }
             c.Items.Add(create);
             c.Items.Add(Item("打开设置", Program.ShowSettings));
@@ -503,6 +697,8 @@ namespace ClearDesk
             }
             return IntPtr.Zero;
         }
+        /// <summary>Puts a widget that is not shown yet at this position (and remembers it).</summary>
+        internal void PlaceAt(Point p) { Left = p.X; Top = p.Y; State.X = p.X; State.Y = p.Y; }
         internal void SendToBottom()
         {
             var h = new WindowInteropHelper(this).Handle;
@@ -652,6 +848,7 @@ namespace ClearDesk
             }
 
             Surface.SetMaterial(m);
+            ApplyLook();
             Program.Save();
         }
 

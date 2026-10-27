@@ -56,6 +56,9 @@ namespace ClearDesk
             worker.Start();
         }
 
+        /// <summary>Forgets a cached icon (the recycle bin changes between empty and full).</summary>
+        public static void Forget(string path) { cache.Remove(path); }
+
         public static void Bind(Image control, string path)
         {
             RenderOptions.SetBitmapScalingMode(control, BitmapScalingMode.HighQuality);

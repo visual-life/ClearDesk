@@ -229,10 +229,12 @@ namespace ClearDesk
             try
             {
                 IntPtr result;
+                int stock = SystemItems.StockIconIndex(p);                       // 2.2.1: the recycle bin shows its empty / full icon
+                if (stock >= 0) { var stockIcon = IconByIndex(stock); if (stockIcon != null) return stockIcon; }
                 if (p.StartsWith("shell:", StringComparison.OrdinalIgnoreCase))
                 {
                     uint attributes;
-                    if (SHParseDisplayName(p, IntPtr.Zero, out pidl, 0, out attributes) != 0)
+                    if (SHParseDisplayName(SystemItems.ParsingName(p), IntPtr.Zero, out pidl, 0, out attributes) != 0)
                         return null;
                     result = SHGetFileInfo(pidl, 0, ref info, (uint)Marshal.SizeOf(info), 0x4008);
                 }
@@ -247,6 +249,11 @@ namespace ClearDesk
                     Marshal.FreeCoTaskMem(pidl);
             }
 
+            return IconByIndex(info.index);
+        }
+
+        internal static ImageSource IconByIndex(int index)
+        {
             foreach (int size in new[]
             {
                 4,
@@ -261,7 +268,7 @@ namespace ClearDesk
                 try
                 {
                     var iid = new Guid("46EB5926-582E-4017-9FDF-E8998DAA0950");
-                    if (SHGetImageList(size, ref iid, out list) != 0 || list == null || list.GetIcon(info.index, 1, out icon) != 0 || icon == IntPtr.Zero)
+                    if (SHGetImageList(size, ref iid, out list) != 0 || list == null || list.GetIcon(index, 1, out icon) != 0 || icon == IntPtr.Zero)
                         continue;
                     BitmapSource bitmap = Imaging.CreateBitmapSourceFromHIcon(icon, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
                     // Some legacy apps return a small icon inside a padded 256px shell canvas.

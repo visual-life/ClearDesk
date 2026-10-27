@@ -138,6 +138,16 @@ namespace ClearDesk
             shown = true;
         }
 
+        /// <summary>2.2.2: keeps the blur window directly below its owner. Called from the owner's WM_WINDOWPOSCHANGED, so a z-order change (activation,
+        /// the 2.0.8 "pin to bottom" rule) never leaves the blur window above the widget — that showed as a blurred blob without icons or text.</summary>
+        public void Reorder(IntPtr owner)
+        {
+            if (disposed || !shown || owner == IntPtr.Zero) return;
+            if (GetWindow(owner, 2) != Handle) Native.SetWindowPos(Handle, owner, 0, 0, 0, 0, 0x1 | 0x2 | 0x10);
+        }
+        public bool IsDirectlyBelow(IntPtr owner) { return !shown || GetWindow(owner, 2) == Handle; }
+        public bool Shown { get { return shown; } }
+
         // Fades the blur together with the window content (no pop-in after the window is shown).
         public float TargetOpacity { get; private set; } = 1f;
         public void Fade(float value, int milliseconds)

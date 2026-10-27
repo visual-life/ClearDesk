@@ -49,6 +49,28 @@ namespace ClearDesk
     }
 
     /// <summary>The 2.2.0 widget kinds. They are single-instance like clock / weather: on/off is kept in Settings.ToolWidgets, position and size in Settings.Widgets[kind].</summary>
+    /// <summary>
+    /// Owner for file / folder dialogs opened from a widget. Widgets sit at the bottom of the z-order and (when locked) refuse activation, so a dialog
+    /// owned by the widget — or by nothing — could open behind other windows and look like "nothing happens". This invisible top-most owner
+    /// (centred on the work area) makes the dialog appear in front.
+    /// </summary>
+    internal sealed class DialogHost : IDisposable
+    {
+        sealed class HwndWrap : System.Windows.Forms.IWin32Window { public IntPtr Hwnd; IntPtr System.Windows.Forms.IWin32Window.Handle { get { return Hwnd; } } }
+        readonly System.Windows.Window window; readonly HwndWrap handle = new HwndWrap();
+        internal System.Windows.Window Owner { get { return window; } }
+        internal System.Windows.Forms.IWin32Window Win32 { get { return handle; } }
+        internal DialogHost()
+        {
+            var wa = SystemParameters.WorkArea;
+            window = new System.Windows.Window { Width = 1, Height = 1, WindowStyle = WindowStyle.None, ShowInTaskbar = false, Topmost = true, AllowsTransparency = true, Background = Brushes.Transparent, Opacity = 0, Left = wa.Left + wa.Width / 2, Top = wa.Top + wa.Height / 2, ShowActivated = true };
+            window.Show();
+            handle.Hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            try { window.Activate(); } catch { }
+        }
+        public void Dispose() { try { window.Close(); } catch { } }
+    }
+
     internal static class ToolWidgets
     {
         internal static readonly KeyValuePair<string, string>[] Kinds =
@@ -74,7 +96,39 @@ namespace ClearDesk
             { "sunair", "所在地的日出日落时间和空气质量（AQI），位置来自天气设置。" },
         };
 
-        internal static bool IsTool(string kind) { return Kinds.Any(k => k.Key == kind); }
+        // 2.2.2: some kinds can be put on the desktop more than once. The first instance keeps the plain kind as its id (so every 2.2.x file, folder and setting
+        // stays valid); further instances are "kind~2", "kind~3", … Each instance has its own settings entry, data file and (album) picture folder.
+        internal static readonly string[] Multi = { "todo", "countdown", "schedule", "launcher", "album" };
+        internal static bool IsMulti(string kind) { return Multi.Contains(KindOf(kind)); }
+        internal static string KindOf(string id) { if (id == null) return null; int i = id.IndexOf('~'); return i < 0 ? id : id.Substring(0, i); }
+        internal static int NumberOf(string id) { int i = id == null ? -1 : id.IndexOf('~'); int n; return i >= 0 && int.TryParse(id.Substring(i + 1), out n) && n >= 2 ? n : 1; }
+        internal static string InstanceId(string kind, int n) { return n <= 1 ? kind : kind + "~" + n; }
+        /// <summary>Every known instance of a kind (shown or hidden), first instance first.</summary>
+        internal static List<string> Instances(string kind)
+        {
+            var ids = new HashSet<string>();
+            foreach (var id in (Program.S.ToolWidgets ?? new List<string>()).Concat(Program.S.Widgets.Keys)) if (KindOf(id) == kind && IsTool(id)) ids.Add(id);
+            return ids.OrderBy(NumberOf).ToList();
+        }
+        /// <summary>The id a "new widget" request creates: a multi kind that is already on the desktop gets a new instance, otherwise the first hidden / first instance comes back.</summary>
+        internal static string NewInstanceId(string kind)
+        {
+            if (!IsMulti(kind)) return kind;
+            var all = Instances(kind);
+            if (!all.Any(On)) return all.FirstOrDefault() ?? kind;
+            for (int n = 1; ; n++) { string id = InstanceId(kind, n); if (!all.Contains(id)) return id; }
+        }
+        [ThreadStatic] internal static string Pending;
+        internal static string Titled(string title) { int n = NumberOf(Pending); return n > 1 ? title + " " + n : title; }
+        /// <summary>Removes what an extra instance saved (settings entry, data file, pictures). The first instance keeps its data, as in 2.2.x.</summary>
+        internal static void ForgetData(string id)
+        {
+            if (NumberOf(id) <= 1) return;
+            try { string f = Path.Combine(ToolStore.Root, id + ".json"); if (File.Exists(f)) File.Delete(f); } catch { }
+            try { string d = AlbumStore.FolderFor(id); if (KindOf(id) == "album" && Directory.Exists(d)) Directory.Delete(d, true); } catch { }
+            WidgetLook.Prune(id, null);
+        }
+        internal static bool IsTool(string kind) { return Kinds.Any(k => k.Key == KindOf(kind)); }
         internal static bool On(string kind) { var l = Program.S.ToolWidgets; return l != null && l.Contains(kind); }
         internal static void Set(string kind, bool on)
         {
@@ -83,7 +137,14 @@ namespace ClearDesk
             if (on && !l.Contains(kind)) l.Add(kind);
             if (!on) l.RemoveAll(k => k == kind);
         }
-        internal static GlassWindow Create(string kind)
+        internal static GlassWindow Create(string id)
+        {
+            string kind = KindOf(id);
+            if (!IsTool(kind)) return null;
+            Pending = id;
+            try { return CreateKind(kind); } finally { Pending = null; }
+        }
+        static GlassWindow CreateKind(string kind)
         {
             switch (kind)
             {
@@ -103,13 +164,14 @@ namespace ClearDesk
     /// <summary>Common look and helpers for the new widgets (dark glass, white text, flat controls that do not start a drag when clicked).</summary>
     public abstract class ToolWidget : GlassWindow
     {
-        protected ToolWidget(string kind, string title, double x, double y, double w, double h) : base(Program.Widget(kind, x, y, w, h), title)
+        protected ToolWidget(string kind, string title, double x, double y, double w, double h) : base(Program.Widget(ToolWidgets.Pending ?? kind, x + (ToolWidgets.NumberOf(ToolWidgets.Pending) - 1) * 36, y + (ToolWidgets.NumberOf(ToolWidgets.Pending) - 1) * 36, w, h), ToolWidgets.Titled(title))
         {
             Body.Margin = new Thickness(0);
             Closed += delegate { OnWidgetClosed(); };
         }
         protected virtual void OnWidgetClosed() { }
-        internal string Kind { get { return State.Id; } }
+        internal string Kind { get { return ToolWidgets.KindOf(State.Id); } }
+        internal string InstanceId { get { return State.Id; } }
 
         protected override void Disable()
         {

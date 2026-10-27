@@ -119,7 +119,7 @@ namespace ClearDesk
 
         public TodoWindow() : base("todo", "待办清单", SystemParameters.WorkArea.Left + 40, SystemParameters.WorkArea.Top + 80, 320, 380)
         {
-            data = ToolStore.Load<TodoData>("todo");
+            data = ToolStore.Load<TodoData>(State.Id);
             Heading.Text = "待办清单"; Header.Margin = new Thickness(0, 0, 0, 10);
             hideDone = IconButton("\uE7B3", "隐藏 / 显示已完成", delegate { data.HideDone = !data.HideDone; Save(); Rebuild(); });
             AddHeaderButton(IconButton("\uE74D", "清除已完成", delegate { if (TodoLogic.ClearDone(data) > 0) { Save(); Rebuild(); } }));
@@ -144,7 +144,7 @@ namespace ClearDesk
         protected override void OnWidgetClosed() { reminder.Stop(); }
         protected override void OnResponsive(double extraW, double extraH) { bool n = ExtraWidth < 1 && DefaultWidth < 260; if (n != narrow) { narrow = n; } }
 
-        void Save() { ToolStore.Save("todo", data); }
+        void Save() { ToolStore.Save(State.Id, data); }
 
         internal bool AddFromInputs()
         {
@@ -173,7 +173,8 @@ namespace ClearDesk
         }
 
         internal TodoData Data { get { return data; } }
-        internal void Reload() { data = ToolStore.Load<TodoData>("todo"); Rebuild(); }
+        internal bool TestAdd(string text) { var i = TodoLogic.Add(data, text, null, Now()); if (i == null) return false; Save(); Rebuild(); return true; }
+        internal void Reload() { data = ToolStore.Load<TodoData>(State.Id); Rebuild(); }
 
         void Rebuild()
         {

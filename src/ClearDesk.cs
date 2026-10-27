@@ -25,6 +25,10 @@ namespace ClearDesk
         public string Material = "liquid";
         public double Scale = 1;
         public double CustomW = 0, CustomH = 0;
+        // 2.2.2: look options shared by every widget
+        public bool Frameless = false, NoTextShadow = false;
+        public string BgImage = "", BgFit = "cover";
+        public double BgOpacity = 1, BgDim = 0.25;
         public List<NoteImage> Images = new List<NoteImage>();
         public string Text = "", NoteColor = "amber";
         public List<string> Items = new List<string>();
@@ -139,6 +143,7 @@ namespace ClearDesk
             if (args.Length > 0 && args[0] == "--apply-update") { UpdateApplier.RunHelper(args); return; }          // 2.1.0: updater helper (runs from a temp copy)
             if (args.Length > 0 && args[0] == "--update-test-server") { UpdateTestServer.RunBlocking(args); return; }
             if (args.Length > 0 && args[0] == "--dock-activate") { DockDiag.Activate(args); return; }       // 2.2.0: run the Dock's restore code on one running app (verification)
+            if (args.Length > 0 && args[0] == "--mixer-diag") { MixerDiag.Run(args); return; }               // 2.2.1: list the audio sessions the volume mixer page shows
             if (args.Length > 0 && args[0] == "--dock-diag") { DockDiag.Run(args); return; }                // 2.2.0: list the windows the Dock sees and which are elevated
             if (args.Length > 0 && args[0] == "--weather-diag") { WeatherDiag.Run(args); return; }          // 2.1.1: diagnose location and weather sources
             LaunchArgs = args;
@@ -229,6 +234,7 @@ namespace ClearDesk
             if (!Preview)
             {
                 InstancePipe.Listen(HandleRemote);
+                try { rightClicks = new RightClickTracker(); } catch (Exception e) { Log(e); }   // 2.2.1: new widgets appear where the desktop was right-clicked
                 DesktopMenu.Sync();
                 ModernMenu.RepairIfMoved();
             }
@@ -468,12 +474,14 @@ namespace ClearDesk
 
         public static string DisplayName(string p)
         {
+            string system = SystemItems.NameOf(p); if (system != null) return system;
             string ext = Path.GetExtension(p);
             return ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) || ext.Equals(".url", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(p) : Path.GetFileName(p);
         }
 
         public static void OpenItem(string p)
         {
+            if (SystemItems.IsSystem(p)) { if (!SystemItems.Open(p)) MessageBox.Show("无法打开：" + SystemItems.NameOf(p), "ClearDesk"); return; }
             try
             {
                 if (!p.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase) && !File.Exists(p) && !Directory.Exists(p))
@@ -592,11 +600,12 @@ namespace ClearDesk
                 AddWindow(new NoteWindow(n));
         }
 
+        static RightClickTracker rightClicks;
         static void HandleRemote(string[] args)
         {
             if (args != null && args.Contains("--startup")) return; // a second autostart launch must not pop the settings window
             string kind = WidgetCatalog.Requested(args);
-            if (kind != null) NewWidget(kind);
+            if (kind != null) NewWidget(kind, PlaceMode.DesktopClick);
             else ShowSettings();
         }
 
@@ -606,7 +615,28 @@ namespace ClearDesk
                 .Select(w => new Rect(w.Left, w.Top, w.ActualWidth, w.ActualHeight)).ToList();
         }
 
-        public static NoteWindow NewNote()
+        // 2.2.1: top-left for a new widget of this size at the last right-click, or null (default placement).
+        internal static Point? RequestedPosition(Size size, PlaceMode mode)
+        {
+            if (mode == PlaceMode.Default) return null;
+            try
+            {
+                int px, py; if (!WidgetPlacement.TryRecent(WidgetPlacement.NowMs(), out px, out py)) return null;
+                if (mode == PlaceMode.DesktopClick && !Native.DesktopAt(new Native.POINT { X = px, Y = py })) return null;   // the right-click was not on the desktop
+                var src = windows.Where(w => w.IsVisible).Select(w => PresentationSource.FromVisual(w)).FirstOrDefault(x => x != null && x.CompositionTarget != null);
+                Matrix m = src != null ? src.CompositionTarget.TransformFromDevice : Matrix.Identity;
+                if (src == null) { try { using (var g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) m = new Matrix(96.0 / g.DpiX, 0, 0, 96.0 / g.DpiY, 0, 0); } catch { } }
+                Func<System.Drawing.Rectangle, Rect> dip = r => { var a = m.Transform(new Point(r.Left, r.Top)); var b = m.Transform(new Point(r.Right, r.Bottom)); return new Rect(a, b); };
+                var screens = System.Windows.Forms.Screen.AllScreens;
+                var work = screens.Select(sc => dip(sc.WorkingArea)).ToList(); var areas = screens.SelectMany(sc => new[] { dip(sc.WorkingArea), dip(sc.Bounds) }).Distinct().ToList();
+                var cursor = m.Transform(new Point(px, py));
+                bool snap = S.Magnet && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Alt) == 0;
+                return WidgetPlacement.Compute(cursor, size, work, SnapTargets(null), areas, snap, false);
+            }
+            catch (Exception e) { Log(e); return null; }
+        }
+
+        public static NoteWindow NewNote(PlaceMode mode = PlaceMode.Default)
         {
             var wa = SystemParameters.WorkArea;
             int n = S.Notes.Count;
@@ -619,6 +649,7 @@ namespace ClearDesk
                 Height = 240,
                 NoteColor = NoteWindow.Palette[n % (NoteWindow.Palette.Length - 1)][0]
             };
+            var at = RequestedPosition(new Size(b.Width, b.Height), mode); if (at.HasValue) { b.X = at.Value.X; b.Y = at.Value.Y; }
             S.Notes.Add(b);
             Save();
             var w = new NoteWindow(b);
@@ -629,11 +660,14 @@ namespace ClearDesk
         }
 
         // Creates (or reveals) a widget by catalog kind. Returns the window shown.
-        public static GlassWindow NewWidget(string kind)
+        public static GlassWindow NewWidget(string kind, PlaceMode mode = PlaceMode.Default, bool exact = false)
         {
+            string instance = kind;      // 2.2.2: "todo~2" names one instance; a plain kind of a multi-instance widget means "one more" unless exact
+            if (exact && ToolWidgets.IsTool(kind)) kind = ToolWidgets.KindOf(kind);
+            else if (ToolWidgets.IsTool(kind)) instance = ToolWidgets.NewInstanceId(kind);
             if (!WidgetCatalog.IsKnown(kind)) return null;
-            if (kind == "note") return NewNote();
-            if (kind == "box") { NewBox(); return windows.LastOrDefault(); }
+            if (kind == "note") return NewNote(mode);
+            if (kind == "box") { NewBox(mode); return windows.LastOrDefault(); }
             Func<GlassWindow, bool> match;
             Func<GlassWindow> create;
             switch (kind)
@@ -645,11 +679,11 @@ namespace ClearDesk
                 case "quick": S.QuickControls = true; match = w => w is QuickControlWindow; create = () => new QuickControlWindow(); break;
                 case "almanac": S.Almanac = true; match = w => w is CalendarWindow && w.ExportName == "almanac"; create = () => new CalendarWindow(true); break;
                 default:
-                    if (ToolWidgets.IsTool(kind)) { ToolWidgets.Set(kind, true); match = w => w.ExportName == kind; create = () => ToolWidgets.Create(kind); break; }
+                    if (ToolWidgets.IsTool(kind)) { ToolWidgets.Set(instance, true); match = w => w.ExportName == instance; create = () => ToolWidgets.Create(instance); break; }
                     S.Performance = true; match = w => w is PerformanceWindow; create = () => new PerformanceWindow(); break;
             }
             BoxData state;
-            if (S.Widgets.TryGetValue(kind, out state)) state.Enabled = true;
+            if (S.Widgets.TryGetValue(instance, out state)) state.Enabled = true;
             Save();
             var existing = windows.FirstOrDefault(w => !w.WasClosed && match(w));
             if (existing != null)
@@ -659,7 +693,10 @@ namespace ClearDesk
                 return existing;
             }
             var created = create();
+            var at = RequestedPosition(new Size(created.Width, created.Height), mode);
+            if (at.HasValue) created.PlaceAt(at.Value);
             AddWindow(created);
+            Save();   // 2.2.2: a new widget's own place (the right-click spot!) is written now — it used to wait for the next unrelated save and was lost on a restart
             created.Toast("\uE710", "已添加");
             return created;
         }
@@ -674,7 +711,8 @@ namespace ClearDesk
             w.Show();
         }
 
-        public static void NewBox()
+        public static void NewBox() { NewBox(PlaceMode.Default); }
+        public static void NewBox(PlaceMode mode)
         {
             var b = new BoxData
             {
@@ -684,6 +722,7 @@ namespace ClearDesk
                 Width = 420,
                 Height = 300
             };
+            var at = RequestedPosition(new Size(b.Width, b.Height), mode); if (at.HasValue) { b.X = at.Value.X; b.Y = at.Value.Y; }
             S.Boxes.Add(b);
             Save();
             AddWindow(new OrganizerWindow(b));

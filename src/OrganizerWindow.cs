@@ -162,7 +162,7 @@ namespace ClearDesk
                 Filter();
                 Program.Save();
             }));
-            ContextMenu.Items.Insert(2, Item("新建收纳格", Program.NewBox));
+            ContextMenu.Items.Insert(2, Item("新建收纳格", delegate { Program.NewBox(PlaceMode.LastRightClick); }));
             ContextMenu.Items.Insert(3, Item("刷新桌面项目", Refresh));
             ContextMenu.Items.Insert(4, Item("恢复隐藏的引用", delegate
             {
@@ -171,6 +171,11 @@ namespace ClearDesk
                 Program.Save();
             }));
             ContextMenu.Items.Insert(5, Item("重命名收纳格", Rename));
+            systemMenu = new MenuItem { Header = "添加系统图标" };
+            systemMenu.SubmenuOpened += delegate { FillSystemMenu(); };
+            FillSystemMenu();
+            ContextMenu.Items.Insert(6, systemMenu);
+            Tick(3000, CheckRecycleBin);
             var create = new MenuItem { Header = "新建" };
             create.Items.Add(Item("文件夹", delegate { OrganizerFiles.Prompt(this, State, "新建文件夹", true, Refresh); }));
             create.Items.Add(Item("文本文档", delegate { OrganizerFiles.Prompt(this, State, "新建文本文档.txt", false, Refresh); }));
@@ -281,9 +286,53 @@ namespace ClearDesk
             Root.Children.Add(grip);
         }
 
+        MenuItem systemMenu; bool? binFull;
+
+        void FillSystemMenu()
+        {
+            systemMenu.Items.Clear();
+            foreach (var item in SystemItems.All)
+            {
+                var entry = item;
+                systemMenu.Items.Add(Item(entry.Name, delegate { SetSystemItem(entry.Path, !HasItem(entry.Path)); }, HasItem(entry.Path)));
+            }
+        }
+
+        internal bool HasItem(string path) { return all != null && all.Contains(path, StringComparer.OrdinalIgnoreCase); }
+
+        /// <summary>Adds (or removes) one of the system icons: 此电脑, 回收站, 控制面板, 用户文件夹, 网络.</summary>
+        internal void SetSystemItem(string path, bool present)
+        {
+            if (!SystemItems.IsSystem(path)) return;
+            if (present)
+            {
+                State.Excluded.RemoveAll(x => string.Equals(x, path, StringComparison.OrdinalIgnoreCase));
+                if (!State.Items.Contains(path, StringComparer.OrdinalIgnoreCase)) State.Items.Add(path);
+            }
+            else
+            {
+                State.Items.RemoveAll(x => string.Equals(x, path, StringComparison.OrdinalIgnoreCase));
+                if (State.Desktop && !State.Excluded.Contains(path, StringComparer.OrdinalIgnoreCase)) State.Excluded.Add(path);
+            }
+            Program.Save(); Refresh(); FillSystemMenu();
+        }
+
+        internal MenuItem TestSystemMenu { get { return systemMenu; } }
+        internal ContextMenu TestItemMenu(string path) { return ItemMenu(path); }
+
+        void CheckRecycleBin()
+        {
+            if (!HasItem(SystemItems.RecycleBin.Path)) { binFull = null; return; }
+            bool full = SystemItems.RecycleBinFull();
+            if (binFull.HasValue && binFull.Value != full) items.RefreshIcon(SystemItems.RecycleBin.Path);
+            binFull = full;
+        }
+
+        internal void TestCheckRecycleBin() { CheckRecycleBin(); }
+
         void Refresh()
         {
-            all = State.Items.Concat(State.Desktop ? Program.DesktopItems() : Enumerable.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).Where(p => !State.Excluded.Contains(p)).ToList();
+            all = State.Items.Concat(State.Desktop ? Program.DesktopItems().Concat(SystemItems.OnDesktop()) : Enumerable.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).Where(p => !State.Excluded.Contains(p)).ToList();
             Filter();
         }
 
@@ -314,7 +363,14 @@ namespace ClearDesk
             {
                 Program.OpenItem(path);
             }));
-            menu.Items.Add(Item("固定到 Dock", delegate
+            if (SystemItems.IsRecycleBin(path))
+            {
+                var empty = Item("清空回收站", delegate { if (SystemItems.Empty(new System.Windows.Interop.WindowInteropHelper(this).Handle)) { binFull = null; CheckRecycleBin(); } });
+                empty.IsEnabled = SystemItems.RecycleBinFull();
+                menu.Opened += delegate { empty.IsEnabled = SystemItems.RecycleBinFull(); };
+                menu.Items.Add(empty);
+            }
+            if (!SystemItems.IsSystem(path)) menu.Items.Add(Item("固定到 Dock", delegate
             {
                 if (!Program.S.Pins.Contains(path))
                 {

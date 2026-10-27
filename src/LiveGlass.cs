@@ -71,6 +71,7 @@ namespace ClearDesk
             {
                 SetMaterial(this.material);
             };
+            IsVisibleChanged += delegate { if (live != null) live.Sync(); };
             Unloaded += delegate
             {
                 Stop();

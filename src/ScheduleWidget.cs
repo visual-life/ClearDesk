@@ -114,7 +114,7 @@ namespace ClearDesk
 
         public ScheduleWindow() : base("schedule", "日程", SystemParameters.WorkArea.Left + 380, SystemParameters.WorkArea.Top + 440 + 270, 320, 330)
         {
-            data = ToolStore.Load<ScheduleData>("schedule"); ScheduleLogic.Prune(data, Now());
+            data = ToolStore.Load<ScheduleData>(State.Id); ScheduleLogic.Prune(data, Now());
             Heading.Text = "日程";
             AddHeaderButton(IconButton("\uE8E5", "导入 .ics 日历文件", ImportIcs));
             input = Input("添加日程，如：明天 14:00 项目评审");
@@ -126,7 +126,7 @@ namespace ClearDesk
             Tick(60000, Rebuild);   // runs once now, then every minute while visible
             ContextMenu.Items.Insert(0, Item("说明：只读本地日程与 .ics 文件", delegate { Toast("\uE946", "Windows 日历没有免密钥的本地读取接口，请导入 .ics"); }));
         }
-        void Save() { ToolStore.Save("schedule", data); }
+        void Save() { ToolStore.Save(State.Id, data); }
         internal bool Commit()
         {
             DateTime start; string title; bool allDay;

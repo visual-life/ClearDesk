@@ -38,7 +38,7 @@ namespace ClearDesk
             return locked ? "已锁定" : "显示中";
         }
 
-        internal static bool SingletonOn(string kind)
+        internal static bool SingletonOn(string kind, string id = null)
         {
             var s = Program.S;
             switch (kind)
@@ -51,10 +51,10 @@ namespace ClearDesk
                 case "performance": return s.Performance;
                 case "quick": return s.QuickControls;
             }
-            return ToolWidgets.IsTool(kind) && ToolWidgets.On(kind);
+            return ToolWidgets.IsTool(kind) && ToolWidgets.On(id ?? kind);
         }
 
-        static void SetSingleton(string kind, bool on)
+        static void SetSingleton(string kind, bool on, string id = null)
         {
             var s = Program.S;
             switch (kind)
@@ -66,7 +66,7 @@ namespace ClearDesk
                 case "almanac": s.Almanac = on; break;
                 case "performance": s.Performance = on; break;
                 case "quick": s.QuickControls = on; break;
-                default: if (ToolWidgets.IsTool(kind)) ToolWidgets.Set(kind, on); break;
+                default: if (ToolWidgets.IsTool(kind)) ToolWidgets.Set(id ?? kind, on); break;
             }
         }
 
@@ -80,7 +80,7 @@ namespace ClearDesk
         internal static int BoxCount(BoxData b)
         {
             IEnumerable<string> all = b.Items;
-            if (b.Desktop) all = all.Concat(Program.DesktopItems());
+            if (b.Desktop) all = all.Concat(Program.DesktopItems()).Concat(SystemItems.OnDesktop());
             return all.Distinct(StringComparer.OrdinalIgnoreCase).Count(p => !b.Excluded.Contains(p));
         }
 
@@ -89,9 +89,15 @@ namespace ClearDesk
             var list = new List<WidgetEntry>();
             foreach (var kind in Singletons)
             {
-                BoxData data; Program.S.Widgets.TryGetValue(kind, out data);
-                list.Add(new WidgetEntry { Kind = kind, Id = kind, Name = KindName(kind), Data = data, Visible = SingletonOn(kind),
-                    Detail = data == null ? "尚未放置到桌面" : "位置 " + (int)data.X + ", " + (int)data.Y });
+                var ids = ToolWidgets.IsMulti(kind) ? ToolWidgets.Instances(kind) : new List<string>();
+                if (ids.Count == 0) ids.Add(kind);
+                foreach (var id in ids)
+                {
+                    BoxData data; Program.S.Widgets.TryGetValue(id, out data);
+                    int n = ToolWidgets.NumberOf(id);
+                    list.Add(new WidgetEntry { Kind = kind, Id = id, Name = KindName(kind) + (n > 1 ? " " + n : ""), Data = data, Visible = SingletonOn(kind, id),
+                        Detail = data == null ? "尚未放置到桌面" : "位置 " + (int)data.X + ", " + (int)data.Y });
+                }
             }
             foreach (var n in Program.S.Notes)
             {
@@ -125,10 +131,10 @@ namespace ClearDesk
                 if (visible && w == null) Program.AddWindow(e.Kind == "note" ? (GlassWindow)new NoteWindow(e.Data) : new OrganizerWindow(e.Data));
                 if (!visible && w != null) w.Close();
             }
-            else if (visible) Program.NewWidget(e.Kind);
+            else if (visible) Program.NewWidget(e.Id, PlaceMode.Default, true);
             else
             {
-                SetSingleton(e.Kind, false);
+                SetSingleton(e.Kind, false, e.Id);
                 if (e.Data != null) e.Data.Enabled = false;
                 Program.Save();
                 if (w != null) w.Close();
@@ -196,10 +202,11 @@ namespace ClearDesk
             }
             else
             {
-                SetSingleton(e.Kind, false);
-                Program.S.Widgets.Remove(e.Kind);
+                SetSingleton(e.Kind, false, e.Id);
+                Program.S.Widgets.Remove(e.Id);
                 Program.Save();
                 if (w != null) w.Close();
+                ToolWidgets.ForgetData(e.Id);
             }
             e.Visible = false;
             return true;

@@ -87,6 +87,8 @@ namespace ClearDesk
             check(!DockRestorer.AncestorMatch(riot, new[] { ux }) && !DockRestorer.AncestorMatch(null, new[] { riot }), "launcher match: unrelated processes do not match");
 
             V220WidgetTests.Rules(check);
+            V221Tests.Rules(check);
+            V222Tests.Rules(check);
         }
 
         internal static async Task Run(Action<bool, string> check)
@@ -102,6 +104,8 @@ namespace ClearDesk
             check(result == DockRestorer.Result.Restored && !Native.IsIconic(h), "dock restore (real window): SC_RESTORE restores it");
             win.Close();
             await V220WidgetTests.Run(check);
+            await V221Tests.Run(check);
+            await V222Tests.Run(check);
         }
     }
 }

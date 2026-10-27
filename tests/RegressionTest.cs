@@ -42,9 +42,14 @@ namespace ClearDesk
             try
             {
                 await Task.Delay(1200);
+                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v222")      // developer shortcut: only the 2.2.2 tests
+                {
+                    V222Tests.Rules(Check); await V222Tests.Run(Check);
+                    return;
+                }
                 var organizer = Program.App.Windows.OfType<OrganizerWindow>().First();
                 var dock = Program.App.Windows.OfType<DockWindow>().First();
-                Check(organizer.IsLoaded && organizer.TestGrid.ItemCount == Program.DesktopItems().Count(), "organizer creates successfully and shows all desktop references");
+                Check(organizer.IsLoaded && organizer.TestGrid.ItemCount == Program.DesktopItems().Concat(SystemItems.OnDesktop()).Distinct(StringComparer.OrdinalIgnoreCase).Count(p => !organizer.TestState.Excluded.Contains(p)), "organizer creates successfully and shows all desktop references");
                 int initialCount = organizer.TestGrid.ItemCount;
                 double initialHeight = organizer.Height;
                 organizer.TestToggleCollapsed();

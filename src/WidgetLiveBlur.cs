@@ -19,6 +19,21 @@ namespace ClearDesk
         public bool Enabled { get { return backdrop != null && backdrop.Enabled; } }
         internal IntPtr Handle { get { return backdrop == null ? IntPtr.Zero : backdrop.Handle; } }
 
+        internal static bool TestDisableReorder;     // reproduces the 2.2.1 behaviour in tests
+        System.Windows.Interop.HwndSource hooked;
+        internal bool IsDirectlyBelowOwner { get { return backdrop == null || owner == null || backdrop.IsDirectlyBelow(new WindowInteropHelper(owner).Handle); } }
+        IntPtr OwnerMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
+        {
+            if (msg == 0x47 && backdrop != null && !disposed && !TestDisableReorder) backdrop.Reorder(hwnd);       // WM_WINDOWPOSCHANGED
+            return IntPtr.Zero;
+        }
+        void Hook()
+        {
+            if (owner == null || hooked != null) return;
+            var h = new WindowInteropHelper(owner).Handle; if (h == IntPtr.Zero) return;
+            hooked = System.Windows.Interop.HwndSource.FromHwnd(h); if (hooked != null) hooked.AddHook(OwnerMessage);
+        }
+
         public LiveBehind(FrameworkElement element)
         {
             pane = element;
@@ -33,6 +48,8 @@ namespace ClearDesk
                 owner.Closed += Closed;
             }
             pane.SizeChanged += Changed;
+            Hook();
+            if (owner != null && hooked == null) owner.SourceInitialized += delegate { Hook(); };
             // keep the blur directly under the widget if something re-orders the desktop layer
             order = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1.5) };
             order.Tick += delegate { Sync(); };
@@ -41,6 +58,7 @@ namespace ClearDesk
         }
 
         void Changed(object sender, EventArgs e) { Sync(); }
+        internal int TestShownCount { get { return backdrop != null && backdrop.Shown ? 1 : 0; } }
         void Visible(object sender, DependencyPropertyChangedEventArgs e) { Sync(); }
         void Closed(object sender, EventArgs e) { Dispose(); }
 
@@ -55,6 +73,7 @@ namespace ClearDesk
             }
             var a = pane.PointToScreen(new Point(1, 1));
             var b = pane.PointToScreen(new Point(pane.ActualWidth - 1, pane.ActualHeight - 1));
+            Hook();
             backdrop.Sync(handle, new Rect(a, b), (b.X - a.X) / Math.Max(1, pane.ActualWidth - 2), true);
         }
 
@@ -72,6 +91,7 @@ namespace ClearDesk
                 owner.Closed -= Closed;
             }
             pane.SizeChanged -= Changed;
+            if (hooked != null) { hooked.RemoveHook(OwnerMessage); hooked = null; }
             if (backdrop != null) { backdrop.Dispose(); backdrop = null; }
         }
     }

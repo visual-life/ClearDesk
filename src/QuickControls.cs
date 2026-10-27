@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
@@ -351,7 +352,7 @@ namespace ClearDesk
     // ---------------------------------------------------------------- widget
     public class QuickControlWindow : GlassWindow
     {
-        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); }
+        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); if (pages != null) pages.VerticalAlignment = extraH > 1 && !mixerOpen ? VerticalAlignment.Center : VerticalAlignment.Stretch; }
         OutputVolume volume;
         RadioSwitch wifi, bluetooth;
         Windows.Devices.Enumeration.DeviceWatcher[] btWatchers;
@@ -365,12 +366,14 @@ namespace ClearDesk
         bool wifiConnected; string ssid; int? bars;
         DispatcherTimer signal;
         bool netHooked;
+        StackPanel mainPage; MixerPage mixer; Grid pages; bool mixerOpen;
+        readonly TranslateTransform mainShift = new TranslateTransform(), mixerShift = new TranslateTransform();
         static readonly Brush OnBrush = new SolidColorBrush(Color.FromArgb(150, 64, 140, 255));
         static readonly Brush OffBrush = new SolidColorBrush(Color.FromArgb(34, 255, 255, 255));
 
         public QuickControlWindow() : base(Program.Widget("quick", SystemParameters.WorkArea.Right - 420, 450, 400, 285), "快捷控制")
         {
-            var root = new StackPanel();
+            var root = new StackPanel(); mainPage = root;
             // volume
             var vrow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
             vrow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -418,14 +421,17 @@ namespace ClearDesk
             var shortcuts = new UniformGrid3();
             shortcuts.Add(Shortcut("\uE713", "设置", "ms-settings:"));
             shortcuts.Add(Shortcut("\uE7F4", "显示", "ms-settings:display"));
-            shortcuts.Add(Shortcut("\uE767", "声音", "ms-settings:sound"));
+            shortcuts.Add(ShortcutAction("\uE767", "声音", "打开音量合成器", delegate { ShowMixer(true); }));
             shortcuts.Add(Shortcut("\uE774", "可用网络", "ms-availablenetworks:"));
             root.Children.Add(shortcuts.Panel);
-            Body.Children.Add(root);
+            pages = new Grid(); pages.Children.Add(root); root.RenderTransform = mainShift;
+            Body.Children.Add(pages);
 
             {
                 volume = new OutputVolume(Dispatcher);
                 volume.Changed += ShowVolume;
+                mixer = new MixerPage(volume, delegate { ShowMixer(false); }, DeviceMenu, delegate { ShowMixer(false); Open("ms-settings:apps-volume"); });
+                mixer.Visibility = Visibility.Collapsed; mixer.RenderTransform = mixerShift; pages.Children.Add(mixer);
                 ShowVolume();
                 wifi = new RadioSwitch(Windows.Devices.Radios.RadioKind.WiFi, Dispatcher);
                 bluetooth = new RadioSwitch(Windows.Devices.Radios.RadioKind.Bluetooth, Dispatcher);
@@ -442,6 +448,7 @@ namespace ClearDesk
             ShowWifi(); ShowBluetooth();
             Closed += delegate
             {
+                if (mixer != null) mixer.Stop();
                 if (signal != null) signal.Stop();
                 if (netHooked) try { Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged -= OnNetwork; } catch { }
                 if (volume != null) volume.Dispose();
@@ -510,6 +517,46 @@ namespace ClearDesk
             return new Border { Child = g, CornerRadius = new CornerRadius(14), Padding = new Thickness(8), Background = OffBrush, BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), BorderThickness = new Thickness(1) };
         }
 
+        Button ShortcutAction(string glyph, string name, string tip, Action action)
+        {
+            var b = Shortcut(glyph, name, null); b.ToolTip = tip;
+            b.Click += (s, e) => { action(); e.Handled = true; };
+            return b;
+        }
+
+        // 2.2.1: the 声音 button opens the volume mixer inside the widget (slide + fade, ← goes back)
+        internal bool MixerOpen { get { return mixerOpen; } }
+        internal MixerPage TestMixer { get { return mixer; } }
+        internal void ShowMixer(bool show)
+        {
+            if (mixer == null || show == mixerOpen) return;
+            mixerOpen = show;
+            var main = mainPage; var page = mixer; bool animate = IsVisible && !Program.Rendering;
+            pages.VerticalAlignment = VerticalAlignment.Stretch;
+            if (show)
+            {
+                page.Visibility = Visibility.Visible; page.Start();
+                if (animate) Slide(main, mainShift, 0, -36, 1, 0, () => { if (mixerOpen) main.Visibility = Visibility.Collapsed; }); else main.Visibility = Visibility.Collapsed;
+                if (animate) Slide(page, mixerShift, 36, 0, 0, 1, null); else { page.Opacity = 1; mixerShift.X = 0; }
+            }
+            else
+            {
+                page.Stop(); main.Visibility = Visibility.Visible;
+                if (animate) { Slide(page, mixerShift, 0, 36, 1, 0, () => { if (!mixerOpen) page.Visibility = Visibility.Collapsed; }); Slide(main, mainShift, -36, 0, 0, 1, null); }
+                else { page.Visibility = Visibility.Collapsed; main.Opacity = 1; mainShift.X = 0; }
+                OnResponsive(ExtraWidth, ExtraHeight);
+            }
+        }
+        static void Slide(UIElement element, TranslateTransform shift, double fromX, double toX, double fromOpacity, double toOpacity, Action done)
+        {
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut }; var span = TimeSpan.FromMilliseconds(200);
+            element.Visibility = Visibility.Visible;
+            var fade = new DoubleAnimation(fromOpacity, toOpacity, span) { EasingFunction = ease };
+            if (done != null) fade.Completed += delegate { done(); };
+            shift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(fromX, toX, span) { EasingFunction = ease });
+            element.BeginAnimation(UIElement.OpacityProperty, fade);
+        }
+
         Button Shortcut(string glyph, string name, string uri)
         {
             var p = new StackPanel { Orientation = Orientation.Horizontal };
@@ -517,7 +564,7 @@ namespace ClearDesk
             var t = Program.Text(name, 11.5); t.Margin = new Thickness(6, 0, 0, 0); p.Children.Add(t);
             var b = new Button { Content = p, Template = Flat(), Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)), Height = 32, Padding = new Thickness(6, 0, 6, 0), Cursor = Cursors.Hand, ToolTip = "打开 " + name, Focusable = false };
             AutomationName(b, name);
-            b.Click += (s, e) => { Open(uri); e.Handled = true; };
+            if (uri != null) b.Click += (s, e) => { Open(uri); e.Handled = true; };
             return b;
         }
 
@@ -559,6 +606,7 @@ namespace ClearDesk
             fill.Width = w * level; fill.Opacity = muted ? .35 : 1;
             thumb.Margin = new Thickness(Math.Max(0, Math.Min(w - 14, w * level - 7)), 0, 0, 0);
             muteButton.Background = muted ? OnBrush : new SolidColorBrush(Color.FromArgb(30, 255, 255, 255));
+            if (mixer != null && mixerOpen) mixer.UpdateMaster();
         }
 
         void DeviceMenu()

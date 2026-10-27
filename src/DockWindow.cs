@@ -9,6 +9,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace ClearDesk
 {
@@ -103,13 +104,10 @@ namespace ClearDesk
                 StartFrames();
             };
             ContextMenu.Items.Insert(0, Item("打开桌面启动台", Program.Launchpad));
-            running.Changed += delegate
-            {
-                if (!dragging && !buttons.Any(b => b.ContextMenu != null && b.ContextMenu.IsOpen))
-                    Rebuild();
-            };
+            running.Changed += delegate { ScheduleRebuild(); };
             Closed += delegate
             {
+                if (rebuildTimer != null) rebuildTimer.Stop();
                 StopFrames();
                 FinishTransition(false);
                 running.Dispose();
@@ -125,6 +123,8 @@ namespace ClearDesk
             };
             Loaded += delegate
             {
+                var hs = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+                if (hs != null) hs.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) => { if (m == 0x47 && liveBackdrop != null) liveBackdrop.Reorder(h); return IntPtr.Zero; });
                 UpdateBackdrop();
                 if (!Program.Rendering)
                 {
@@ -167,6 +167,32 @@ namespace ClearDesk
                     CancelDrag();
             };
             Rebuild();
+        }
+
+        // 2.2.2: the running-apps list changes whenever any window of any program opens or closes (even when the Dock shows the same icons). Rebuilding on
+        // every such change reset the hover magnification and re-laid the plate — the Dock "jumped". Changes are now coalesced for 250 ms and the Dock is
+        // only rebuilt when what it shows (which apps, pinned, running dot) really differs.
+        DispatcherTimer rebuildTimer; string builtSignature; internal int RebuildCount, SkippedRebuilds;
+        internal static string Signature(IEnumerable<DockEntry> list)
+        {
+            return string.Join("|", list.Select(e => (e.PinPath != null ? "P:" + e.PinPath : "R:" + (e.Identity == null ? "" : e.Identity.Key)) + (e.IsRunning ? "+" : "-")));
+        }
+        void ScheduleRebuild()
+        {
+            if (WasClosed) return;
+            if (rebuildTimer == null)
+            {
+                rebuildTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
+                rebuildTimer.Tick += delegate { rebuildTimer.Stop(); RebuildIfChanged(); };
+            }
+            rebuildTimer.Stop(); rebuildTimer.Start();
+        }
+        internal bool RebuildIfChanged()
+        {
+            if (WasClosed || dragging || buttons.Any(b => b.ContextMenu != null && b.ContextMenu.IsOpen)) return false;
+            string now = Signature(running.Entries(Program.S.Pins));
+            if (now == builtSignature) { SkippedRebuilds++; return false; }
+            Rebuild(); return true;
         }
 
         DockAutoHide autoHide;
@@ -253,7 +279,7 @@ namespace ClearDesk
                 buttons.Clear();
                 sizes.Clear();
                 dots.Clear();
-                entries = running.Entries(Program.S.Pins);
+                entries = running.Entries(Program.S.Pins); builtSignature = Signature(entries); RebuildCount++;
                 pinnedCount = entries.Count(e => e.Pinned);
                 separatorBefore = entries.Any(e => !e.Pinned) ? pinnedCount + 1 : -1;
                 var wa = SystemParameters.WorkArea;

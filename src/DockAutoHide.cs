@@ -100,13 +100,34 @@ namespace ClearDesk
             return found;
         }
 
+        // 2.2.2: while the Dock is hidden it only comes back after the overlap has been gone for a short moment. Windows that are being activated, minimised
+        // or moved briefly report odd rectangles; showing at once made the Dock slide out and straight back in ("jumping").
+        internal const int ShowDelayMs = 280;
+        internal static bool ShouldDelayShow(bool wantHide, bool hidden, bool enabled, bool peekedByPointer)
+        {
+            return enabled && hidden && !wantHide && !peekedByPointer;
+        }
+        DispatcherTimer showDelay; internal int DelayedShows;
         internal void Evaluate()
         {
             if (disposed || dock.WasClosed) return;
             bool enabled = Program.S.DockAutoHide;
             Overlapped = enabled && FindOverlap();
             if (!enabled || !Overlapped) PeekedByPointer = false;
-            Apply(ShouldHide(enabled, Overlapped, PeekedByPointer));
+            bool hide = ShouldHide(enabled, Overlapped, PeekedByPointer);
+            if (ShouldDelayShow(hide, Hidden, enabled, PeekedByPointer) && !Program.Rendering)
+            {
+                if (showDelay == null)
+                {
+                    showDelay = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(ShowDelayMs) };
+                    showDelay.Tick += delegate { showDelay.Stop(); if (!disposed && !dock.WasClosed) { Overlapped = Program.S.DockAutoHide && FindOverlap(); if (!Overlapped) { DelayedShows++; Apply(false); } } };
+                }
+                if (!showDelay.IsEnabled) showDelay.Start();
+                if (!pointer.IsEnabled) pointer.Start();
+                return;
+            }
+            if (showDelay != null) showDelay.Stop();
+            Apply(hide);
             if (enabled && (Hidden || PeekedByPointer)) { if (!pointer.IsEnabled) pointer.Start(); }
             else pointer.Stop();
         }
@@ -159,6 +180,7 @@ namespace ClearDesk
             disposed = true;
             if (debounce != null) debounce.Stop();
             if (pointer != null) pointer.Stop();
+            if (showDelay != null) showDelay.Stop();
             if (stateHook != IntPtr.Zero) Native.UnhookWinEvent(stateHook);
             if (locationHook != IntPtr.Zero) Native.UnhookWinEvent(locationHook);
             stateHook = locationHook = IntPtr.Zero;

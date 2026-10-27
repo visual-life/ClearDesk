@@ -67,7 +67,7 @@ namespace ClearDesk
 
         public LauncherWindow() : base("launcher", "快捷启动", SystemParameters.WorkArea.Left + 720, SystemParameters.WorkArea.Top + 80, 340, 240)
         {
-            data = ToolStore.Load<LauncherData>("launcher");
+            data = ToolStore.Load<LauncherData>(State.Id);
             Heading.Text = "快捷启动";
             var add = IconButton("\uE710", "添加文件 / 文件夹 / 网址", null);
             add.Click += delegate { ShowAddMenu(add); };
@@ -84,7 +84,7 @@ namespace ClearDesk
             Rebuild();
         }
 
-        void Save() { ToolStore.Save("launcher", data); }
+        void Save() { ToolStore.Save(State.Id, data); }
         void OnDrop(object sender, DragEventArgs e)
         {
             int added = 0;
@@ -102,8 +102,8 @@ namespace ClearDesk
         void ShowAddMenu(FrameworkElement anchor)
         {
             var menu = new ContextMenu { PlacementTarget = anchor, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
-            menu.Items.Add(Item("添加文件或应用…", delegate { var d = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = "选择文件或应用" }; if (d.ShowDialog() == true) foreach (var f in d.FileNames) AddPath(f); }));
-            menu.Items.Add(Item("添加文件夹…", delegate { using (var d = new System.Windows.Forms.FolderBrowserDialog()) if (d.ShowDialog() == System.Windows.Forms.DialogResult.OK) AddPath(d.SelectedPath); }));
+            menu.Items.Add(Item("添加文件或应用…", delegate { using (var host = new DialogHost()) { var d = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = "选择文件或应用" }; if (d.ShowDialog(host.Owner) == true) foreach (var f in d.FileNames) AddPath(f); } }));
+            menu.Items.Add(Item("添加文件夹…", delegate { using (var host = new DialogHost()) using (var d = new System.Windows.Forms.FolderBrowserDialog()) if (d.ShowDialog(host.Win32) == System.Windows.Forms.DialogResult.OK) AddPath(d.SelectedPath); }));
             menu.Items.Add(Item("添加网址…", delegate { AskUrl(); }));
             menu.IsOpen = true;
         }
