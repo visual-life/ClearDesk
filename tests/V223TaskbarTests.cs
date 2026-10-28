@@ -11,10 +11,10 @@ namespace ClearDesk
     /// <summary>2.2.3: the optional transparent-taskbar component (TranslucentTB) must never stop ClearDesk from starting.</summary>
     internal static class V223TaskbarTests
     {
-        static string Sha(string path) { using (var f = File.OpenRead(path)) using (var s = SHA256.Create()) return BitConverter.ToString(s.ComputeHash(f)).Replace("-", ""); }
+        internal static string Sha(string path) { using (var f = File.OpenRead(path)) using (var s = SHA256.Create()) return BitConverter.ToString(s.ComputeHash(f)).Replace("-", ""); }
 
         // a stand-in component: a harmless console program named TranslucentTB.exe plus a couple of data files and a manifest
-        static string Make(string root, string name)
+        internal static string Make(string root, string name)
         {
             string dir = Path.Combine(root, name); Directory.CreateDirectory(dir);
             File.Copy(Path.Combine(Environment.SystemDirectory, "ping.exe"), Path.Combine(dir, "TranslucentTB.exe"), true);
@@ -24,17 +24,17 @@ namespace ClearDesk
             return dir;
         }
 
-        static void Manifest(string dir)
+        internal static void Manifest(string dir)
         {
             File.WriteAllText(Path.Combine(dir, "verified.sha256"), string.Join("\r\n", new[] { "ExplorerHooks.dll", "TranslucentTB.exe", "Xaml.dll" }.Select(n => Sha(Path.Combine(dir, n)) + "  " + n)) + "\r\n");
         }
 
         static TaskbarService Svc(string dir, string cache)
         {
-            return new TaskbarService { Dir = dir, CacheDir = cache, Args = "-n 120 127.0.0.1", ExternalRunning = () => false };
+            return new TaskbarService { Dir = dir, CacheDir = cache, Args = "-n 120 127.0.0.1", ExternalRunning = () => false, PackSource = () => null };
         }
 
-        static void Kill(TaskbarService s)
+        internal static void Kill(TaskbarService s)
         {
             try { int id = s.ProcessId; if (id > 0) using (var p = Process.GetProcessById(id)) { p.Kill(); p.WaitForExit(3000); } } catch { }
             try { s.Dispose(); } catch { }
@@ -111,7 +111,7 @@ namespace ClearDesk
                 // 8. DesktopServices: startup path never throws, retries after the problem is fixed, and a user kill is respected
                 Program.S.Taskbar = true;
                 var ds = new DesktopServices { SkipGuardian = true };
-                var ts = ds.TaskbarComponentService; ts.Dir = lone; ts.CacheDir = Path.Combine(root, "nocache"); ts.Args = "-n 120 127.0.0.1"; ts.ExternalRunning = () => false;
+                var ts = ds.TaskbarComponentService; ts.Dir = lone; ts.CacheDir = Path.Combine(root, "nocache"); ts.Args = "-n 120 127.0.0.1"; ts.ExternalRunning = () => false; ts.PackSource = () => null;
                 bool started = true, thrown = false;
                 try { started = ds.StartTaskbar(true); } catch { thrown = true; }
                 check(!thrown && !started && !ds.TaskbarActive, "2.2.3 startup: broken optional component does not throw and does not activate the feature");

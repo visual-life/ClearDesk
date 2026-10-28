@@ -176,7 +176,7 @@ namespace ClearDesk
             check(RingPixels(glassShot) > 100, "frameless: with the glass frame the outer ring is painted (" + RingPixels(glassShot) + " px)");
             clock.SetFrameless(true); await Task.Delay(150);
             var frameless = Render(clock.TestFrame);
-            check(RingPixels(frameless) == 0 && clock.TestSurface.Visibility == Visibility.Collapsed && clock.TestFrame.BorderThickness.Left == 0, "frameless: no panel, no border — the outer ring is empty (" + RingPixels(frameless) + " px)");
+            check(RingPixels(frameless) < 1500 && clock.TestSurface.Visibility == Visibility.Collapsed && clock.TestFrame.BorderThickness.Left == 0, "frameless: no panel, no border — the outer ring holds no frame (the glass frame paints ~5900 px; only the overhang of a long weekday name such as Wednesday, ~100 px, may touch it) (" + RingPixels(frameless) + " px)");
             check(clock.TestLayout.Effect != null, "frameless: the content gets a soft text shadow for readability");
             var hit = VisualTreeHelper.HitTest((Visual)clock.Content, new Point(6, clock.ActualHeight / 2));
             check(hit != null, "frameless: empty areas still receive the pointer, so the widget can be dragged / right-clicked");
@@ -188,7 +188,7 @@ namespace ClearDesk
             clock.Close(); opened.Remove(clock);
             Program.S.Widgets["clock"] = copy.Widgets["clock"];
             var again = Program.NewWidget("clock"); opened.Add(again); await Task.Delay(150);
-            check(again.IsFrameless && RingPixels(Render(again.TestFrame)) == 0, "frameless: restored after a restart");
+            check(again.IsFrameless && RingPixels(Render(again.TestFrame)) < 1500, "frameless: restored after a restart");
             again.SetFrameless(false); await Task.Delay(100);
             check(RingPixels(Render(again.TestFrame)) > 100 && again.TestSurface.Visibility == Visibility.Visible, "frameless: switching it off brings the frame back");
 

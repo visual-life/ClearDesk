@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.2.3";
+        internal const string Version = "2.2.4";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -180,6 +180,8 @@ namespace ClearDesk
             Range(g,"自动隐藏延迟","空闲多久后隐藏图标。",3,120,state.IdleSeconds," 秒",v => state.IdleSeconds=v);
             g=AddGroup(0,"任务栏与窗口");
             Toggle(g,"透明任务栏","保留任务栏图标清晰度，退出时恢复。",state.Taskbar,v => { state.Taskbar=v; if (!Program.Preview) Program.Services.Apply(); });
+            Row(g,"修复透明任务栏组件","重新释放 ClearDesk 内置的 TranslucentTB 组件并显示检查结果；提示“组件文件与校验清单不一致”或透明任务栏启动失败时点这里。",ActionButton("修复并检查",delegate { if (!Program.Preview) Program.RepairTaskbarComponent(); }));
+            Toggle(g,"允许使用未通过校验的 TranslucentTB（不推荐）","默认关闭。只有文件夹里的 TranslucentTB.exe 版本与内置版本相同、数字签名有效、但哈希对不上时才会放行（例如被其他工具重新打包）；改过内容的文件不会被放行。开启前请确认文件来源可信。",state.AllowUnverifiedTaskbar,v => state.AllowUnverifiedTaskbar=v);
             Toggle(g,"顶部任务栏自动隐藏","任务栏放在屏幕顶部时 Windows 不支持自动隐藏：开启后由 ClearDesk 收起任务栏、让窗口铺满屏幕；鼠标停在屏幕最上边缘即可唤出，打开开始菜单或托盘时也会显示。关闭或退出 ClearDesk 时自动恢复。",state.TopTaskbarAutoHide,v => { state.TopTaskbarAutoHide=v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"窗口最小化动画","实验性 · 部分窗口可能不支持。",state.Animation,v => { state.Animation=v; if (!Program.Preview) Program.Services.Apply(); });
             Toggle(g,"恢复窗口时播放动画","从任务栏或桌面恢复窗口时播放。",state.RestoreAnimation,v => state.RestoreAnimation=v);

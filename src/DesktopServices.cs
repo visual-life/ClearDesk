@@ -141,22 +141,26 @@ namespace ClearDesk
                     WriteRecovery();
                     taskbarActive = true; taskbarNext = DateTime.MaxValue; taskbarNotice = null; taskbarTries = 0;
                     if (taskbar.Repaired != null) Program.LogText("透明任务栏组件：" + taskbar.Repaired);
+                    if (taskbar.Code == "TB-09") Program.LogText("透明任务栏组件 [TB-09]：按设置使用了未通过哈希校验的 TranslucentTB（版本相同且签名有效）。");
                     return true;
                 }
-                TaskbarFailed(taskbar.Failure ?? "未知原因", taskbar.Retryable);
+                TaskbarFailed(taskbar.Failure ?? "未知原因", taskbar.Retryable, taskbar.Code, taskbar.Diag);
             }
             catch (Exception e)
             {
                 Program.Log(e);
-                TaskbarFailed(e.Message, true);
+                TaskbarFailed(e.Message, true, "TB-06", null);
             }
             return false;
         }
 
-        void TaskbarFailed(string why, bool retry)
+        internal string LastTaskbarCode;
+        void TaskbarFailed(string why, bool retry, string code, string diag)
         {
             taskbarActive = false;
-            Program.LogText("透明任务栏组件未启动：" + why);
+            LastTaskbarCode = code;
+            // errors.log gets the code, the reason and (when known) the per-file facts: folder, expected / actual SHA-256, size, version, signature, running copies
+            Program.LogText("透明任务栏组件未启动" + (code != null ? " [" + code + "]" : "") + "：" + why + (diag != null ? Environment.NewLine + diag.TrimEnd() : ""));
             if (retry && taskbarTries < TaskbarRetrySeconds.Length)
                 taskbarNext = DateTime.Now.AddSeconds(TaskbarRetrySeconds[taskbarTries]);
             else
@@ -165,7 +169,7 @@ namespace ClearDesk
             if (taskbarNotice != why)
             {
                 taskbarNotice = why;
-                Program.Balloon("透明任务栏暂不可用", why + "\nClearDesk 其他功能不受影响，稍后会自动重试；也可在设置里关闭再打开此功能。");
+                Program.Balloon("透明任务栏暂不可用" + (code != null ? " [" + code + "]" : ""), why + "\nClearDesk 其他功能不受影响，稍后会自动重试。点这里打开日志；托盘菜单里有“修复透明任务栏组件”。", Program.OpenLog);
             }
         }
 
@@ -174,9 +178,21 @@ namespace ClearDesk
             if (!Program.S.Taskbar) return;
             if (taskbarActive && taskbar.Exited)
             {
-                // killed (Task Manager, another tool): nothing to restore, and do not fight the user by relaunching it
+                int code = taskbar.ExitCode;
                 taskbarActive = false; taskbarStopped = true; restore.TaskbarProcessId = 0;
                 try { WriteRecovery(); } catch { }
+                if (code != 0 && (DateTime.Now - taskbar.StartedAt).TotalSeconds < 30)
+                {
+                    // 2.2.4: it ended by itself right after starting. TranslucentTB does that after its own "已更新，请重启 Windows" box: Explorer still has an older
+                    // ExplorerTAP / ExplorerHooks of another TranslucentTB loaded (for example the Store version that was just uninstalled).
+                    string why = "TranslucentTB 启动后马上自己退出了（退出码 " + code + "）。常见原因：资源管理器里还留着旧版 TranslucentTB 的组件（比如刚卸载的商店版），它会弹出“已更新，请重启 Windows”。请注销或重启电脑后再开启。";
+                    string diag = null; try { diag = TaskbarComponent.Running(taskbar.RunFrom ?? taskbar.Dir); } catch { }
+                    LastTaskbarCode = "TB-08";
+                    Program.LogText("透明任务栏组件未保持运行 [TB-08]：" + why + (string.IsNullOrEmpty(diag) ? "" : Environment.NewLine + diag.TrimEnd()));
+                    Program.Balloon("透明任务栏没有启动 [TB-08]", why, Program.OpenLog);
+                    return;
+                }
+                // killed (Task Manager, another tool): nothing to restore, and do not fight the user by relaunching it
                 Program.LogText("透明任务栏组件已被结束，ClearDesk 不会自动重新拉起；在设置里关闭再打开即可恢复。");
                 return;
             }
@@ -185,6 +201,44 @@ namespace ClearDesk
                 taskbarNext = DateTime.MaxValue;
                 StartTaskbar(false);
             }
+        }
+
+        /// <summary>2.2.4 "修复透明任务栏组件": re-extract the factory copy over the install folder (and refresh the kept copy), check it again, restart the component when the option is on.
+        /// Returns the report that is shown to the user and also written to errors.log.</summary>
+        internal string RepairTaskbar()
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                var pack = taskbar.PackSource();
+                string cache = taskbar.CacheDir ?? TaskbarComponent.CacheDir;
+                sb.AppendLine("修复前：");
+                sb.Append(TaskbarComponent.Describe(taskbar.Dir, cache, pack, false));
+                string how = null; bool wrote = false;
+                if (pack != null && pack.SelfCheck())
+                {
+                    try { TaskbarComponent.ExtractMissingOrWrong(pack, taskbar.Dir); wrote = true; how = "已从 ClearDesk 内置的出厂副本重新释放组件到安装文件夹。"; }
+                    catch (Exception e) { how = "写入安装文件夹失败（" + e.Message + "），改用每用户副本。"; }
+                }
+                else if (!TaskbarComponent.Repair(taskbar.Dir, cache, pack, out how)) { }
+                else wrote = true;
+                string note;
+                var c = TaskbarComponent.Ensure(taskbar.Dir, cache, pack, taskbar.AllowUnverified(), taskbar.RunDirectory ?? TaskbarComponent.RunDir, out note);
+                sb.AppendLine();
+                sb.AppendLine("修复过程：" + (how ?? "没有可用的出厂副本或备份，无法重新释放。") + (note != null ? " " + note : ""));
+                sb.AppendLine("修复后：" + c.Code + " " + c.Text + (c.Dir != null && !string.Equals(c.Dir.TrimEnd('\\'), taskbar.Dir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) ? "（使用 " + c.Dir + "）" : ""));
+                if (c.Ok && Program.S.Taskbar && !taskbarActive)
+                {
+                    taskbarStopped = false; taskbarTries = 0; taskbarNotice = null;
+                    sb.AppendLine(StartTaskbar(false) ? "透明任务栏已启动。" : "组件已修好，但启动没有成功：" + (taskbar.Failure ?? "") + (taskbar.Code != null ? " [" + taskbar.Code + "]" : ""));
+                }
+                else if (c.Ok && !Program.S.Taskbar) sb.AppendLine("组件已修好。在设置里打开“透明任务栏”即可使用。");
+                if (!c.Ok) sb.AppendLine("仍然不一致：请把 errors.log（托盘/通知里点“打开日志”）发给开发者。");
+            }
+            catch (Exception e) { Program.Log(e); sb.AppendLine("修复时出错：" + e.Message); }
+            string text = sb.ToString();
+            Program.LogText("修复透明任务栏组件：" + Environment.NewLine + text.TrimEnd());
+            return text;
         }
 
         public void MarkTopTaskbar(bool hidden)

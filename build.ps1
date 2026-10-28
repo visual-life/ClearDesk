@@ -1,6 +1,7 @@
 param(
     [string]$Compiler,
     [string]$WindowsMetadata,
+    [string]$TaskbarDirectory,
     [string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist')
 )
 $ErrorActionPreference = 'Stop'
@@ -39,7 +40,35 @@ foreach ($name in @('System.Runtime.dll','System.Runtime.WindowsRuntime.dll','Sy
     $refs += '/reference:' + $ref
 }
 $sources = @('src','tests','third_party\lunar','third_party\qrc') | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot $_) -Filter '*.cs' -Recurse | Select-Object -ExpandProperty FullName }
-& $Compiler /nologo /target:winexe /platform:x64 /optimize+ /deterministic+ /utf8output ('/out:' + (Join-Path $OutputDirectory 'ClearDesk.exe')) ('/win32manifest:' + (Join-Path $PSScriptRoot 'config\app.manifest')) ('/win32icon:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico')) ('/resource:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico') + ',ClearDesk.AppIcon.ico') $refs $sources
+# 2.2.4: the verified optional taskbar component (TranslucentTB) is also compiled into ClearDesk.exe as a factory copy (resource ClearDesk.taskbar.zip). ClearDesk checks and
+# repairs the taskbar folder against it, so a stale/hand-copied verified.sha256 or a damaged folder can never leave the feature unusable. Builds without the component (CI) skip it.
+$extraResources = @()
+if (-not $TaskbarDirectory) { $TaskbarDirectory = Join-Path $PSScriptRoot 'dist\taskbar' }
+if (Test-Path -LiteralPath (Join-Path $TaskbarDirectory 'verified.sha256')) {
+    $TaskbarDirectory = (Resolve-Path -LiteralPath $TaskbarDirectory).Path
+    foreach ($line in Get-Content -LiteralPath (Join-Path $TaskbarDirectory 'verified.sha256')) {
+        if (-not $line.Trim()) { continue }
+        $expected, $name = $line -split '  ', 2
+        if ((Get-FileHash -LiteralPath (Join-Path $TaskbarDirectory $name) -Algorithm SHA256).Hash -ne $expected) { throw "Taskbar component does not match its manifest: $name" }
+    }
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $pack = Join-Path ([IO.Path]::GetTempPath()) ('ClearDesk.taskbar-' + [Guid]::NewGuid().ToString('N') + '.zip')
+    $za = [IO.Compression.ZipFile]::Open($pack, 'Create')
+    try {
+        foreach ($f in Get-ChildItem -LiteralPath $TaskbarDirectory -Recurse -File) {
+            if ($f.Extension -eq '.zip') { continue }
+            $rel = $f.FullName.Substring($TaskbarDirectory.TrimEnd('\').Length + 1).Replace('\', '/')
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $f.FullName, $rel, 'Optimal')
+        }
+        $ver = (Get-Item -LiteralPath (Join-Path $TaskbarDirectory 'TranslucentTB.exe')).VersionInfo.FileVersion
+        $entry = $za.CreateEntry('version.txt')
+        $w = New-Object IO.StreamWriter($entry.Open()); $w.Write($ver); $w.Dispose()
+    } finally { $za.Dispose() }
+    $extraResources += ('/resource:' + $pack + ',ClearDesk.taskbar.zip')
+    Write-Host "Embedded taskbar factory copy ($([math]::Round((Get-Item -LiteralPath $pack).Length / 1MB, 2)) MB) from $TaskbarDirectory"
+}
+& $Compiler /nologo /target:winexe /platform:x64 /optimize+ /deterministic+ /utf8output ('/out:' + (Join-Path $OutputDirectory 'ClearDesk.exe')) ('/win32manifest:' + (Join-Path $PSScriptRoot 'config\app.manifest')) ('/win32icon:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico')) ('/resource:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico') + ',ClearDesk.AppIcon.ico') $extraResources $refs $sources
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'config\ClearDesk.exe.config') -Destination $OutputDirectory -Force
 Write-Host "Built $OutputDirectory\ClearDesk.exe"

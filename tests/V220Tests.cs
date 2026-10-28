@@ -90,6 +90,7 @@ namespace ClearDesk
             V221Tests.Rules(check);
             V222Tests.Rules(check);
             V223Tests.Rules(check);
+            V224Tests.Rules(check);
         }
 
         internal static async Task Run(Action<bool, string> check)
@@ -108,6 +109,7 @@ namespace ClearDesk
             await V221Tests.Run(check);
             await V222Tests.Run(check);
             await V223Tests.Run(check);
+            await V224Tests.Run(check);
         }
     }
 }

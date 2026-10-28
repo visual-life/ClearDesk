@@ -25,6 +25,9 @@ namespace ClearDesk
         public string Material = "liquid";
         public double Scale = 1;
         public double CustomW = 0, CustomH = 0;
+        // 2.2.4: the place in device pixels (and the window DPI it was measured at). Device pixels do not depend on how each monitor scales DIPs, so a widget on a second
+        // monitor with a different scale can be put back exactly; only used when the DPI is unchanged.
+        public int PxX = int.MinValue, PxY = int.MinValue, PxDpi = 0;
         // 2.2.2: look options shared by every widget
         public bool Frameless = false, NoTextShadow = false;
         public string BgImage = "", BgFit = "cover";
@@ -46,6 +49,7 @@ namespace ClearDesk
         public bool Icons = true, AutoHide = false, RestoreOnInput = true, Taskbar = false, TaskbarFade = false, Animation = false, RestoreAnimation = true, Dock = true, Clock = true, Performance = true, Calendar = false, Weather = false, Almanac = false, Music = false, WeatherOnline = false, HideAtStart = false;
         public int ConfigVersion = 1;
         public bool GpuRendering = false;
+        public bool AllowUnverifiedTaskbar = false;   // 2.2.4: off by default; lets a TranslucentTB.exe of the shipped version with a valid signature run although its hash differs
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
         public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false, LiveDesktopBlur = false;
         public List<BoxData> Notes = new List<BoxData>();
@@ -144,6 +148,7 @@ namespace ClearDesk
             if (args.Length > 0 && args[0] == "--update-test-server") { UpdateTestServer.RunBlocking(args); return; }
             if (args.Length > 0 && args[0] == "--dock-activate") { DockDiag.Activate(args); return; }       // 2.2.0: run the Dock's restore code on one running app (verification)
             if (args.Length > 0 && args[0] == "--mixer-diag") { MixerDiag.Run(args); return; }               // 2.2.1: list the audio sessions the volume mixer page shows
+            if (args.Length > 0 && args[0] == "--taskbar-diag") { TaskbarDiag.Run(args); return; }              // 2.2.4: the transparent-taskbar component: folder, expected vs actual hashes, signature, running copies
             if (args.Length > 0 && args[0] == "--dock-diag") { DockDiag.Run(args); return; }                // 2.2.0: list the windows the Dock sees and which are elevated
             if (args.Length > 0 && args[0] == "--weather-diag") { WeatherDiag.Run(args); return; }          // 2.1.1: diagnose location and weather sources
             LaunchArgs = args;
@@ -199,8 +204,13 @@ namespace ClearDesk
                 e.Handled = true;
                 MessageBox.Show("操作未完成：" + e.Exception.Message, "ClearDesk");
             };
+            // 2.2.4: Windows logoff / shutdown / restart and any other way out: the unsaved changes are written first
+            App.SessionEnding += delegate { FlushSave(); };
+            AppDomain.CurrentDomain.ProcessExit += delegate { FlushSave(); };
+            try { Microsoft.Win32.SystemEvents.SessionEnding += delegate { FlushSave(); }; } catch { }
             App.Exit += delegate
             {
+                FlushSave();
                 Quitting = true;
                 if (Services != null)
                     Services.Dispose();
@@ -317,27 +327,25 @@ namespace ClearDesk
             mutex.Dispose();
         }
 
-        static void Load()
+        /// <summary>2.2.4: settings.json exists but could not be read (locked): defaults are used for now and nothing is written until it can be read again.</summary>
+        internal static bool ConfigBlocked;
+        internal static string LoadNote;
+
+        internal static void Load()
         {
             S = new Settings();
-            if (File.Exists(Config))
+            ConfigBlocked = false; LoadNote = null;
+            bool existed = File.Exists(Config);
+            var r = ConfigStore.Load(Config);
+            if (r.S != null) S = r.S;
+            existed = existed || r.Existed;
+            if (r.Blocked) ConfigBlocked = true;
+            if (r.Note.Length > 0) { LoadNote = r.Note; LogText(r.Note); }
+            if (r.Corrupt && r.S == null)
             {
-                try
-                {
-                    S = new JavaScriptSerializer().Deserialize<Settings>(File.ReadAllText(Config));
-                }
-                catch (Exception e)
-                {
-                    Log(e);
-                    try
-                    {
-                        File.Copy(Config, Config + ".corrupt-" + DateTime.Now.ToString("yyyyMMddHHmmss"));
-                    }
-                    catch
-                    {
-                    }
-                }
+                try { File.Copy(Config, Config + ".corrupt-" + DateTime.Now.ToString("yyyyMMddHHmmss")); } catch { }
             }
+            if (r.S != null && r.Source != Config && !ConfigBlocked) dirty = true;      // heal settings.json from the backup it was restored from
 
             if (S == null)
                 S = new Settings();
@@ -397,7 +405,14 @@ namespace ClearDesk
             S.IdleSeconds = Math.Max(3, Math.Min(600, S.IdleSeconds));
             S.DockSize = Math.Max(32, Math.Min(72, S.DockSize));
             S.AnimationMs = Math.Max(150, Math.Min(900, S.AnimationMs));
-            if (!File.Exists(Config))
+            if (S.ConfigVersion < 6)
+            {
+                // 2.2.4: widget keys are case-insensitive and lower-case; numbers JSON cannot carry are repaired
+                S.ConfigVersion = 6;
+            }
+            ConfigStore.Migrate(S);
+            if (ConfigStore.Sanitize(S)) { LogText("设置里有无效的位置/大小数值，已修复（无法修复的组件回到默认位置）。"); dirty = true; }
+            if (!existed && !ConfigBlocked)
             {
                 S.Pins = DesktopItems().Where(p => Path.GetExtension(p).Equals(".lnk", StringComparison.OrdinalIgnoreCase) && !Path.GetFileNameWithoutExtension(p).Equals("Lume", StringComparison.OrdinalIgnoreCase)).Take(7).ToList();
                 Save();
@@ -405,34 +420,85 @@ namespace ClearDesk
         }
 
         static readonly object SaveLock = new object();
+        static volatile bool dirty;
+        static DispatcherTimer saveTimer, retryTimer;
+        internal static int SaveFailures;
+        internal static string LastSaveError;
 
-        // Serialized (the update check saves from a worker thread) and retried: antivirus or the indexer can hold settings.json open for a moment.
+        // Serialized (the update check saves from a worker thread). 2.2.4: written to disk and retried (sharing violations AND access-denied), never throws, and while settings.json
+        // is unreadable (ConfigBlocked) it is left alone. A failed save stays "dirty" and is retried in the background and at exit.
         public static void Save()
         {
             lock (SaveLock)
             {
-                Directory.CreateDirectory(Data);
-                string temp = Config + ".tmp";
-                string json = new JavaScriptSerializer().Serialize(S);
-                for (int attempt = 0; ; attempt++)
+                if (S == null) return;
+                if (ConfigBlocked)
                 {
-                    try
-                    {
-                        File.WriteAllText(temp, json);
-                        if (File.Exists(Config))
-                            File.Replace(temp, Config, Config + ".bak");
-                        else
-                            File.Move(temp, Config);
-                        return;
-                    }
-                    catch (IOException)
-                    {
-                        if (attempt >= 5) throw;
-                        System.Threading.Thread.Sleep(40 * (attempt + 1));
-                    }
+                    dirty = true;
+                    if (!TryUnblock()) return;
                 }
+                string error;
+                if (ConfigStore.Write(Config, S, out error)) { dirty = false; LastSaveError = null; return; }
+                dirty = true; SaveFailures++; LastSaveError = error;
+                if (SaveFailures <= 3 || SaveFailures % 20 == 0) LogText("保存设置失败（稍后重试）：" + error);
             }
+            ScheduleRetry();
         }
+
+        /// <summary>The unreadable settings.json can be read now: use what is in it (the in-memory defaults are dropped) and show the widgets again.</summary>
+        static bool TryUnblock()
+        {
+            var r = ConfigStore.Load(Config);
+            if (r.Blocked) return false;
+            ConfigBlocked = false;
+            if (r.S != null)
+            {
+                S = r.S; if (S.Boxes == null) S.Boxes = new List<BoxData>(); if (S.Pins == null) S.Pins = new List<string>(); if (S.ToolWidgets == null) S.ToolWidgets = new List<string>();
+                if (S.Notes == null) S.Notes = new List<BoxData>(); if (S.Widgets == null) S.Widgets = new Dictionary<string, BoxData>(); if (S.LaunchpadItems == null) S.LaunchpadItems = new List<string>();
+                ConfigStore.Migrate(S); ConfigStore.Sanitize(S);
+                LogText("settings.json 又可以读取了，已使用其中保存的设置。");
+                try { if (App != null) App.Dispatcher.BeginInvoke(new Action(Rebuild)); } catch { }
+                return false;      // nothing to write now: the file on disk is the truth
+            }
+            return true;
+        }
+
+        /// <summary>Position / size changes: written shortly after the last change (a drag end saves at once).</summary>
+        internal static void SaveSoon()
+        {
+            dirty = true;
+            try
+            {
+                if (App == null || App.Dispatcher == null) return;
+                App.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (saveTimer == null) { saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) }; saveTimer.Tick += delegate { saveTimer.Stop(); if (dirty) Save(); }; }
+                    saveTimer.Stop(); saveTimer.Start();
+                }));
+            }
+            catch { }
+        }
+
+        static void ScheduleRetry()
+        {
+            try
+            {
+                if (App == null || App.Dispatcher == null) return;
+                App.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (retryTimer == null) { retryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) }; retryTimer.Tick += delegate { retryTimer.Stop(); if (dirty || ConfigBlocked) Save(); }; }
+                    if (!retryTimer.IsEnabled) retryTimer.Start();
+                }));
+            }
+            catch { }
+        }
+
+        /// <summary>Everything still unsaved goes to disk now (exit, Windows logoff / shutdown, crash handlers).</summary>
+        internal static void FlushSave()
+        {
+            try { if (S != null) Save(); } catch (Exception e) { Log(e); }
+        }
+        internal static bool Dirty { get { return dirty; } }
 
         internal static void LogText(string text)
         {
@@ -545,6 +611,10 @@ namespace ClearDesk
                     Services.SetIcons(true, false);
                 }));
             });
+            m.Items.Add("修复透明任务栏组件…", null, delegate
+            {
+                App.Dispatcher.BeginInvoke(new Action(RepairTaskbarComponent));
+            });
             m.Items.Add("退出并恢复桌面", null, delegate
             {
                 App.Dispatcher.Invoke(new Action(Quit));
@@ -555,11 +625,28 @@ namespace ClearDesk
             {
                 App.Dispatcher.Invoke(new Action(ShowSettings));
             };
+            tray.BalloonTipClicked += delegate { var a = balloonClick; if (a != null) { try { App.Dispatcher.BeginInvoke(a); } catch { } } };
         }
 
-        internal static void Balloon(string title, string text)
+        static Action balloonClick;
+        internal static void Balloon(string title, string text) { Balloon(title, text, null); }
+        internal static void Balloon(string title, string text, Action onClick)
         {
-            try { if (tray != null) tray.ShowBalloonTip(6000, title, text, Forms.ToolTipIcon.Info); } catch { }
+            try { balloonClick = onClick; if (tray != null) tray.ShowBalloonTip(6000, title, text, Forms.ToolTipIcon.Info); } catch { }
+        }
+
+        /// <summary>Opens errors.log in the default text editor (the balloon "点这里打开日志").</summary>
+        internal static void OpenLog()
+        {
+            try { string log = Path.Combine(Data, "errors.log"); if (File.Exists(log)) Process.Start(new ProcessStartInfo(log) { UseShellExecute = true }); }
+            catch (Exception e) { Log(e); }
+        }
+
+        /// <summary>The tray / settings command "修复透明任务栏组件": repair, then show what was found and done.</summary>
+        internal static void RepairTaskbarComponent()
+        {
+            string text = Services != null ? Services.RepairTaskbar() : "ClearDesk 服务尚未启动。";
+            try { MessageBox.Show(text + Environment.NewLine + "日志：" + Path.Combine(Data, "errors.log"), "修复透明任务栏组件", MessageBoxButton.OK, MessageBoxImage.Information); } catch { }
         }
 
         public static void Quit()

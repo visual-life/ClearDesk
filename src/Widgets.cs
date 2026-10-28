@@ -255,8 +255,10 @@ namespace ClearDesk
             // top taskbar changes). Dragging the widget later saves the new place.
             if (!PositionGuard.Reachable(new Point(Left, Top), PositionGuard.Screens(null)))
             {
-                Left = wa.Left + 20;
-                Top = wa.Top + 20;
+                // 2.2.4: not the top-left default: the nearest fully visible place (the saved value stays, and comes back with the monitor)
+                var near = PositionGuard.Clamp(new Point(Left, Top), new Size(Math.Max(180, state.Width), Math.Max(100, state.Height)), PositionGuard.WorkAreas(null));
+                Left = near.X;
+                Top = near.Y;
             }
 
             Frame = new Border
@@ -352,7 +354,7 @@ namespace ClearDesk
                 if (ready && !restoring)
                 {
                     if (PositionGuard.IsSystemMove(dragging, Mouse.LeftButton == MouseButtonState.Pressed, DateTime.UtcNow < settleUntil)) ScheduleReassert();
-                    else { State.X = Left; State.Y = Top; }
+                    else { State.X = Left; State.Y = Top; RecordPixels(); Program.SaveSoon(); }
                 }
             };
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged += displayChanged = delegate { try { Dispatcher.BeginInvoke(new Action(NoteSystemChange)); } catch { } };
@@ -379,7 +381,7 @@ namespace ClearDesk
             {
                 ready = true;
                 ApplyEdges();
-                if (!Program.Preview) settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.SettleMs);
+                if (!Program.Preview) { settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.SettleMs); SchedulePixelCheck(); }
                 SetCollapsed();
                 UpdatePaper();
                 var h = new WindowInteropHelper(this).Handle;
@@ -393,6 +395,7 @@ namespace ClearDesk
             {
                 if (displayChanged != null) Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= displayChanged;
                 if (reassert != null) reassert.Stop();
+                if (pixelCheck != null) pixelCheck.Stop();
                 WasClosed = true;
                 if (Timer != null)
                     Timer.Stop();
@@ -550,6 +553,45 @@ namespace ClearDesk
         // ---- 2.2.2 position stability (see PositionGuard) ----
         DateTime settleUntil; bool restoring; EventHandler displayChanged; System.Windows.Threading.DispatcherTimer reassert;
         internal int PositionRestores;
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct PxRect { public int Left, Top, Right, Bottom; }
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out PxRect r);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        int CurrentDpi() { try { return (int)Math.Round(VisualTreeHelper.GetDpi(this).PixelsPerInchX); } catch { return 0; } }
+        /// <summary>2.2.4: remember where the window really is in device pixels (and at which DPI).</summary>
+        internal void RecordPixels()
+        {
+            try
+            {
+                var h = new WindowInteropHelper(this).Handle; PxRect r;
+                if (h == IntPtr.Zero || !GetWindowRect(h, out r)) return;
+                State.PxX = r.Left; State.PxY = r.Top; State.PxDpi = CurrentDpi();
+            }
+            catch { }
+        }
+        System.Windows.Threading.DispatcherTimer pixelCheck;
+        /// <summary>After the settle time: if the window is not where the saved device pixels say (different monitors scaled differently put the same DIP numbers elsewhere), put it back.</summary>
+        void SchedulePixelCheck()
+        {
+            if (Program.Preview || !State.Enabled) return;
+            pixelCheck = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(PositionGuard.SettleMs + 400) };
+            pixelCheck.Tick += delegate
+            {
+                pixelCheck.Stop();
+                if (WasClosed || dragging || Mouse.LeftButton == MouseButtonState.Pressed) return;
+                try
+                {
+                    var h = new WindowInteropHelper(this).Handle; PxRect r;
+                    if (h == IntPtr.Zero || !GetWindowRect(h, out r)) return;
+                    var screens = System.Windows.Forms.Screen.AllScreens.Select(sc => new Rect(sc.Bounds.Left, sc.Bounds.Top, sc.Bounds.Width, sc.Bounds.Height)).ToList();
+                    var at = PositionGuard.PixelFix(State.PxX, State.PxY, State.PxDpi, CurrentDpi(), r.Left, r.Top, screens);
+                    if (!at.HasValue) return;
+                    restoring = true;
+                    try { SetWindowPos(h, IntPtr.Zero, (int)at.Value.X, (int)at.Value.Y, 0, 0, 0x0001 | 0x0004 | 0x0010); PositionRestores++; } finally { restoring = false; }
+                }
+                catch (Exception e) { Program.Log(e); }
+            };
+            pixelCheck.Start();
+        }
         /// <summary>The system is changing displays / scaling / work area: for a moment location changes that the user did not make are not saved, then undone.</summary>
         internal void NoteSystemChange() { settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.ChangeMs); ScheduleReassert(); }
         void ScheduleReassert()
@@ -575,6 +617,7 @@ namespace ClearDesk
         IntPtr SystemChangeHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             if (msg == 0x2E0 || msg == 0x7E || msg == 0x1A) NoteSystemChange();      // WM_DPICHANGED, WM_DISPLAYCHANGE, WM_SETTINGCHANGE
+            else if (msg == 0x11 || msg == 0x16) Program.FlushSave();               // WM_QUERYENDSESSION, WM_ENDSESSION: Windows is logging off / shutting down / restarting
             return IntPtr.Zero;
         }
 
