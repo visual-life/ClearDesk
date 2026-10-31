@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
@@ -59,6 +60,53 @@ namespace ClearDesk
         {
             try { var info = new RBINFO { size = Marshal.SizeOf(typeof(RBINFO)) }; return SHQueryRecycleBin(null, ref info) == 0 && info.items > 0; } catch { return false; }
         }
+
+        /// <summary>2.2.5: cheap "does the recycle bin hold anything" probe, overriding for tests.
+        /// SHQueryRecycleBin(NULL) walks every item of every drive — measured 26-32 s on a machine whose bins held
+        /// 35 722 files — while listing one folder and stopping at the first $I* entry costs milliseconds.
+        /// Returns null when it cannot tell, so the caller falls back to the shell query.</summary>
+        internal static Func<bool?> RecycleBinProbe = ProbeRecycleBin;
+        static bool? ProbeRecycleBin()
+        {
+            try
+            {
+                var user = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+                if (user == null) return null;
+                string sid = user.Value;
+                foreach (var drive in DriveInfo.GetDrives())
+                {
+                    string root;
+                    try
+                    {
+                        if (drive.DriveType != DriveType.Fixed) continue;
+                        root = drive.RootDirectory.FullName;
+                    }
+                    catch { continue; }
+                    string dir = Path.Combine(root, "$Recycle.Bin", sid);
+                    bool exists;
+                    try { exists = Directory.Exists(dir); } catch { return null; }
+                    if (!exists) continue;
+                    try
+                    {
+                        // "$I*" is pushed down to FindFirstFile: the filesystem answers with the first hit instead of
+                        // handing the folder's tens of thousands of entries to managed code.
+                        if (Directory.EnumerateFiles(dir, "$I*").Any()) return true;
+                    }
+                    catch { return null; }
+                }
+                return false;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>True when the bin holds items: the cheap probe first, the shell query only when that cannot tell.</summary>
+        internal static bool RecycleBinHasItems()
+        {
+            bool? fast;
+            try { fast = RecycleBinProbe(); } catch { fast = null; }
+            return fast.HasValue ? fast.Value : RecycleBinFull();
+        }
+
         /// <summary>System image-list index of the empty / full recycle bin icon, for the recycle bin only (others: -1).</summary>
         internal static int StockIconIndex(string path)
         {
@@ -67,7 +115,7 @@ namespace ClearDesk
             {
                 var info = new STOCK { size = Marshal.SizeOf(typeof(STOCK)) };
                 // SIID_RECYCLER = 31 (empty), SIID_RECYCLERFULL = 32; SHGSI_SYSICONINDEX = 0x4000
-                return SHGetStockIconInfo(RecycleBinFull() ? 32 : 31, 0x4000, ref info) == 0 ? info.index : -1;
+                return SHGetStockIconInfo(RecycleBinHasItems() ? 32 : 31, 0x4000, ref info) == 0 ? info.index : -1;
             }
             catch { return -1; }
         }

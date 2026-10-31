@@ -175,7 +175,7 @@ namespace ClearDesk
             systemMenu.SubmenuOpened += delegate { FillSystemMenu(); };
             FillSystemMenu();
             ContextMenu.Items.Insert(6, systemMenu);
-            Tick(3000, CheckRecycleBin);
+            Tick(30000, delegate { CheckRecycleBin(); });   // 2.2.6: the bin folders are watched (SyncBinWatcher); this is only the safety net
             var create = new MenuItem { Header = "新建" };
             create.Items.Add(Item("文件夹", delegate { OrganizerFiles.Prompt(this, State, "新建文件夹", true, Refresh); }));
             create.Items.Add(Item("文本文档", delegate { OrganizerFiles.Prompt(this, State, "新建文本文档.txt", false, Refresh); }));
@@ -194,12 +194,18 @@ namespace ClearDesk
             }));
             Refresh();
             Watch();
+            SyncBinWatcher();
             Closed += delegate
             {
                 if (debounce != null)
                     debounce.Stop();
                 foreach (var watcher in watchers)
                     watcher.Dispose();
+                if (binWatcher != null)
+                {
+                    binWatcher.Dispose();
+                    binWatcher = null;
+                }
             };
         }
 
@@ -314,21 +320,84 @@ namespace ClearDesk
                 State.Items.RemoveAll(x => string.Equals(x, path, StringComparison.OrdinalIgnoreCase));
                 if (State.Desktop && !State.Excluded.Contains(path, StringComparer.OrdinalIgnoreCase)) State.Excluded.Add(path);
             }
-            Program.Save(); Refresh(); FillSystemMenu();
+            Program.Save(); Refresh(); FillSystemMenu(); SyncBinWatcher();
         }
 
         internal MenuItem TestSystemMenu { get { return systemMenu; } }
         internal ContextMenu TestItemMenu(string path) { return ItemMenu(path); }
 
-        void CheckRecycleBin()
+        // 2.2.6: the icon is driven by a watch on the recycle-bin folders (SyncBinWatcher), so a delete / restore /
+        // empty shows up within a few hundred milliseconds and nothing is polled. Two layers stay behind it, because a
+        // wrong icon is better than a frozen desktop: a cheap O(1) folder probe, and — only when that cannot tell —
+        // SHQueryRecycleBin(NULL) on the pool, at most once every ten minutes, never on the UI thread.
+        bool checkingBin;
+        DateTime binFallbackAt;
+        RecycleBinWatcher binWatcher;
+
+        /// <summary>2.2.6: while the box holds the recycle bin, watch the bin folders so the icon follows a delete /
+        /// restore / empty immediately. Watchers are per window and are released with it.</summary>
+        void SyncBinWatcher()
+        {
+            if (!HasItem(SystemItems.RecycleBin.Path))
+            {
+                if (binWatcher != null)
+                {
+                    binWatcher.Dispose();
+                    binWatcher = null;
+                }
+                return;
+            }
+            if (binWatcher != null && binWatcher.Active) return;
+            if (binWatcher != null)
+            {
+                binWatcher.Dispose();
+                binWatcher = null;
+            }
+            try { binWatcher = new RecycleBinWatcher(CheckRecycleBin); }
+            catch (Exception e) { Program.Log(e); }   // no watcher: the timer still keeps the icon roughly right
+        }
+
+        void CheckRecycleBin() { CheckRecycleBin(false); }
+        void CheckRecycleBin(bool synchronous)
         {
             if (!HasItem(SystemItems.RecycleBin.Path)) { binFull = null; return; }
-            bool full = SystemItems.RecycleBinFull();
+            if (synchronous) { ApplyBinState(QueryBin()); return; }
+            if (checkingBin || WasClosed) return;
+            checkingBin = true;
+            System.Threading.Tasks.Task.Run(delegate
+            {
+                bool full = QueryBin();
+                try
+                {
+                    Dispatcher.BeginInvoke(new Action(delegate
+                    {
+                        checkingBin = false;
+                        ApplyBinState(full);
+                    }));
+                }
+                catch { checkingBin = false; }
+            });
+        }
+        /// <summary>Cheap probe first (one FindFirstFile per drive). Only when it cannot tell does the slow shell query run —
+        /// never on the UI thread, and at most once every ten minutes, so a locked-down $Recycle.Bin cannot turn the 3 s tick
+        /// back into the old freeze.</summary>
+        bool QueryBin()
+        {
+            bool? fast;
+            try { fast = SystemItems.RecycleBinProbe(); } catch { fast = null; }
+            if (fast.HasValue) return fast.Value;
+            if (binFallbackAt != DateTime.MinValue && (DateTime.UtcNow - binFallbackAt).TotalMinutes < 10) return binFull ?? false;
+            binFallbackAt = DateTime.UtcNow;
+            try { return SystemItems.RecycleBinFull(); } catch { return binFull ?? false; }
+        }
+        void ApplyBinState(bool full)
+        {
+            if (WasClosed) return;
             if (binFull.HasValue && binFull.Value != full) items.RefreshIcon(SystemItems.RecycleBin.Path);
             binFull = full;
         }
 
-        internal void TestCheckRecycleBin() { CheckRecycleBin(); }
+        internal void TestCheckRecycleBin() { CheckRecycleBin(true); }
 
         void Refresh()
         {
@@ -365,9 +434,19 @@ namespace ClearDesk
             }));
             if (SystemItems.IsRecycleBin(path))
             {
-                var empty = Item("清空回收站", delegate { if (SystemItems.Empty(new System.Windows.Interop.WindowInteropHelper(this).Handle)) { binFull = null; CheckRecycleBin(); } });
-                empty.IsEnabled = SystemItems.RecycleBinFull();
-                menu.Opened += delegate { empty.IsEnabled = SystemItems.RecycleBinFull(); };
+                var empty = Item("清空回收站", delegate
+                {
+                    if (SystemItems.Empty(new System.Windows.Interop.WindowInteropHelper(this).Handle))
+                    {
+                        binFull = null;
+                        items.RefreshIcon(SystemItems.RecycleBin.Path);   // 2.2.5: the icon follows at once, without waiting for the shell query
+                        CheckRecycleBin();
+                    }
+                });
+                // 2.2.5: the cheap probe answers in milliseconds; this used to be SHQueryRecycleBin(NULL), which froze the
+                // menu for 10-30 s and ran again every time the menu opened.
+                empty.IsEnabled = SystemItems.RecycleBinProbe() ?? binFull ?? false;
+                menu.Opened += delegate { empty.IsEnabled = SystemItems.RecycleBinProbe() ?? binFull ?? false; CheckRecycleBin(); };
                 menu.Items.Add(empty);
             }
             if (!SystemItems.IsSystem(path)) menu.Items.Add(Item("固定到 Dock", delegate
