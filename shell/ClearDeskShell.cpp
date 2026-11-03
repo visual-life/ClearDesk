@@ -13,6 +13,9 @@
 // {6F3B1E52-8C1D-4E0B-9C7A-2D1C5DE0A201}
 static const CLSID CLSID_ClearDeskMenu = { 0x6f3b1e52, 0x8c1d, 0x4e0b, { 0x9c, 0x7a, 0x2d, 0x1c, 0x5d, 0xe0, 0xa2, 0x01 } };
 
+// {6F3B1E52-8C1D-4E0B-9C7A-2D1C5DE0A202}  2.2.9: "固定到启动台" on files and folders
+static const CLSID CLSID_ClearDeskPin = { 0x6f3b1e52, 0x8c1d, 0x4e0b, { 0x9c, 0x7a, 0x2d, 0x1c, 0x5d, 0xe0, 0xa2, 0x02 } };
+
 static HMODULE g_module;
 static long g_refs;
 
@@ -140,10 +143,74 @@ public:
     IFACEMETHODIMP Clone(IEnumExplorerCommand** e) { Command* c = new (std::nothrow) Command(-1); if (!c) return E_OUTOFMEMORY; c->m_cursor = m_cursor; *e = c; return S_OK; }
 };
 
-class Factory : public IClassFactory
+// 2.2.9: one top-level verb on files / folders: runs "ClearDesk.exe --pin-launchpad <path> [<path>...]"
+class PinCommand : public IExplorerCommand
 {
     long m_ref = 1;
 public:
+    PinCommand() { InterlockedIncrement(&g_refs); }
+    virtual ~PinCommand() { InterlockedDecrement(&g_refs); }
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv)
+    {
+        if (!ppv) return E_POINTER;
+        if (riid == IID_IUnknown || riid == IID_IExplorerCommand) { *ppv = static_cast<IExplorerCommand*>(this); AddRef(); return S_OK; }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&m_ref); }
+    IFACEMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&m_ref); if (!r) delete this; return r; }
+    IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR* name) { return SHStrDupW(L"\u56fa\u5b9a\u5230\u542f\u52a8\u53f0", name); }
+    IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icon) { wchar_t p[MAX_PATH + 4]; ExePath(p, MAX_PATH); wcscat_s(p, L",0"); return SHStrDupW(p, icon); }
+    IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tip) { *tip = nullptr; return E_NOTIMPL; }
+    IFACEMETHODIMP GetCanonicalName(GUID* g) { *g = GUID_NULL; return S_OK; }
+    IFACEMETHODIMP GetState(IShellItemArray* items, BOOL, EXPCMDSTATE* state)
+    {
+        DWORD n = 0; if (items) items->GetCount(&n);
+        *state = (Disabled() || n == 0) ? ECS_HIDDEN : ECS_ENABLED;
+        return S_OK;
+    }
+    IFACEMETHODIMP GetFlags(EXPCMDFLAGS* flags) { *flags = ECF_DEFAULT; return S_OK; }
+    IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** e) { *e = nullptr; return E_NOTIMPL; }
+    IFACEMETHODIMP Invoke(IShellItemArray* items, IBindCtx*)
+    {
+        if (!items) return S_OK;
+        wchar_t exe[MAX_PATH]; ExePath(exe, MAX_PATH);
+        DWORD n = 0; items->GetCount(&n);
+        size_t cap = 64 + (size_t)(n + 1) * (MAX_PATH + 4) + MAX_PATH;
+        wchar_t* cmd = new (std::nothrow) wchar_t[cap]; if (!cmd) return E_OUTOFMEMORY;
+        swprintf_s(cmd, cap, L"\"%s\" --pin-launchpad", exe);
+        int added = 0;
+        for (DWORD i = 0; i < n && i < 64; i++)
+        {
+            IShellItem* it = nullptr; if (FAILED(items->GetItemAt(i, &it)) || !it) continue;
+            LPWSTR path = nullptr;
+            if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+            {
+                wcscat_s(cmd, cap, L" \""); wcscat_s(cmd, cap, path); wcscat_s(cmd, cap, L"\""); added++;
+                CoTaskMemFree(path);
+            }
+            it->Release();
+        }
+        HRESULT hr = S_OK;
+        if (added)
+        {
+            wchar_t dir[MAX_PATH]; wcscpy_s(dir, exe); PathRemoveFileSpecW(dir);
+            STARTUPINFOW si = { sizeof(si) }; PROCESS_INFORMATION pi = {};
+            if (!CreateProcessW(exe, cmd, nullptr, nullptr, FALSE, CREATE_BREAKAWAY_FROM_JOB, nullptr, dir, &si, &pi) &&
+                !CreateProcessW(exe, cmd, nullptr, nullptr, FALSE, 0, nullptr, dir, &si, &pi))
+                hr = HRESULT_FROM_WIN32(GetLastError());
+            else { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+        }
+        delete[] cmd;
+        return hr;
+    }
+};
+
+class Factory : public IClassFactory
+{
+    long m_ref = 1;
+    bool m_pin;
+public:
+    explicit Factory(bool pin) : m_pin(pin) {}
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv)
     {
         if (riid == IID_IUnknown || riid == IID_IClassFactory) { *ppv = this; AddRef(); return S_OK; }
@@ -154,7 +221,7 @@ public:
     IFACEMETHODIMP CreateInstance(IUnknown* outer, REFIID riid, void** ppv)
     {
         if (outer) return CLASS_E_NOAGGREGATION;
-        Command* c = new (std::nothrow) Command(-1);
+        IExplorerCommand* c = m_pin ? static_cast<IExplorerCommand*>(new (std::nothrow) PinCommand()) : static_cast<IExplorerCommand*>(new (std::nothrow) Command(-1));
         if (!c) return E_OUTOFMEMORY;
         HRESULT hr = c->QueryInterface(riid, ppv);
         c->Release();
@@ -171,8 +238,8 @@ BOOL APIENTRY DllMain(HMODULE m, DWORD reason, LPVOID)
 
 STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv)
 {
-    if (clsid != CLSID_ClearDeskMenu) return CLASS_E_CLASSNOTAVAILABLE;
-    Factory* f = new (std::nothrow) Factory();
+    if (clsid != CLSID_ClearDeskMenu && clsid != CLSID_ClearDeskPin) return CLASS_E_CLASSNOTAVAILABLE;
+    Factory* f = new (std::nothrow) Factory(clsid == CLSID_ClearDeskPin);
     if (!f) return E_OUTOFMEMORY;
     HRESULT hr = f->QueryInterface(riid, ppv);
     f->Release();

@@ -229,7 +229,7 @@ namespace ClearDesk
             check(Equals(materials.Header, "材质设置") && Equals(((MenuItem)materials.Items[0]).Header, "玻璃 · 实时清透") && Equals(((MenuItem)materials.Items[1]).Header, "磨砂 · 实时模糊"), "launchpad background menu offers both materials");
             check(lp.CurrentMaterial == "liquid" && !lp.TestLiveFrost, "launchpad glass has no backdrop window");
             var lpHeaders = lp.ContextMenu.Items.OfType<MenuItem>().Select(m => m.Header as string).ToList();
-            check(lpHeaders.SequenceEqual(new[] { "材质设置", "添加到启动台…", "打开设置" }), "launchpad menu keeps only 材质设置 / 添加 / 打开设置 (no widget items): " + string.Join(",", lpHeaders));
+            check(lpHeaders.SequenceEqual(new[] { "材质设置", "添加到启动台…", "恢复已移除的项目", "打开设置" }), "launchpad menu keeps only 材质设置 / 添加 / 恢复已移除的项目 (2.2.9) / 打开设置 (no widget items): " + string.Join(",", lpHeaders));
             Render((FrameworkElement)lp.Content, "launchpad-glass");
             lp.TestMaterial2("frosted");
             await Task.Delay(300);

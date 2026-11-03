@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -109,6 +109,7 @@ namespace ClearDesk
             { "发送至桌面收纳", "\uE724" }, { "新建收纳格并添加", "\uE710" }, { "向左移动", "\uE72B" }, { "向右移动", "\uE72A" },
             { "网格 / 列表模式", "\uE80A" }, { "新建收纳格", "\uE710" }, { "刷新桌面项目", "\uE72C" }, { "恢复隐藏的引用", "\uE7B3" },
             { "重命名收纳格", "\uE8AC" }, { "新建", "\uE710" }, { "打开新建文件所在文件夹", "\uE838" },
+            { "固定到启动台", "\uECA5" }, { "从启动台移除", "\uE738" }, { "以管理员身份运行", "\uE7EF" }, { "向前移动", "\uE72B" }, { "向后移动", "\uE72A" }, { "恢复已移除的项目", "\uE777" },
         };
 
         public static string GlyphFor(string header)

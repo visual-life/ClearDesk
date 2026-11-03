@@ -71,7 +71,7 @@ namespace ClearDesk
                 await Task.Delay(400);
                 var r0 = w1.Tiles.Children.OfType<Border>().First();
                 double h1 = Bounds(r0, w1).Height;
-                check(h1 > h0 * 1.3, "2.2.6 folder list: row height and font grow with the widget (" + h0.ToString("0.0") + " -> " + h1.ToString("0.0") + ")");
+                check(h1 > h0 * 1.3 || (h1 > h0 && h1 >= Math.Round(FolderLogic.ListIconMax * 1.45) - 1), "2.2.6 folder list: row height and font grow with the widget, up to the 48 px icon limit (" + h0.ToString("0.0") + " -> " + h1.ToString("0.0") + ")");
                 check(w1.Tiles.Children.OfType<Border>().All(r => Math.Abs(r.ActualWidth - (w1.Scroller.ViewportWidth - 2)) < 3), "2.2.6 folder list: rows follow the new width");
 
                 // live update in list view

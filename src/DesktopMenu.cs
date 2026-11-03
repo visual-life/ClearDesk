@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
@@ -69,8 +69,8 @@ namespace ClearDesk
             try
             {
                 if (Program.Preview) return;
-                if (Program.S.DesktopMenu) Register(Path.Combine(Program.Base, "ClearDesk.exe"));
-                else Unregister();
+                if (Program.S.DesktopMenu) { Register(Path.Combine(Program.Base, "ClearDesk.exe")); RegisterPin(Path.Combine(Program.Base, "ClearDesk.exe")); }
+                else { Unregister(); UnregisterPin(); }
                 ModernMenu.SetVisible(Program.S.DesktopMenu && Program.S.ModernMenu);
             }
             catch (Exception e) { Program.Log(e); }
@@ -103,6 +103,25 @@ namespace ClearDesk
         public static void Unregister(string root = DefaultRoot)
         {
             Registry.CurrentUser.DeleteSubKeyTree(root, false);
+        }
+
+        // 2.2.9: classic file / folder menu entry "固定到启动台" (Win11: under 显示更多选项; the top-level one comes from ClearDeskShell)
+        public const string ClassesRoot = @"Software\Classes";
+        public const string PinVerb = "ClearDeskPinLaunchpad";
+        public const string PinTitle = "固定到启动台";
+        public static string PinCommand(string exe) { return "\"" + exe + "\" --pin-launchpad \"%1\""; }
+        public static void RegisterPin(string exe, string classes = ClassesRoot)
+        {
+            foreach (var type in new[] { "*", "Directory" })
+            {
+                string key = classes + "\\" + type + @"\shell\" + PinVerb;
+                using (var k = Registry.CurrentUser.CreateSubKey(key)) { k.SetValue("MUIVerb", PinTitle); k.SetValue("Icon", "\"" + exe + "\",0"); }
+                using (var c = Registry.CurrentUser.CreateSubKey(key + @"\command")) c.SetValue("", PinCommand(exe));
+            }
+        }
+        public static void UnregisterPin(string classes = ClassesRoot)
+        {
+            foreach (var type in new[] { "*", "Directory" }) Registry.CurrentUser.DeleteSubKeyTree(classes + "\\" + type + @"\shell\" + PinVerb, false);
         }
 
         public static bool IsRegistered(string root = DefaultRoot)

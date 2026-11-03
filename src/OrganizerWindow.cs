@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -363,6 +363,7 @@ namespace ClearDesk
             {
                 Program.OpenItem(path);
             }));
+            if (AdminRun.Supported(path)) { var admin = Item("以管理员身份运行", delegate { AdminRun.Run(path); }); admin.Tag = "admin"; menu.Items.Add(admin); }
             if (SystemItems.IsRecycleBin(path))
             {
                 var empty = Item("清空回收站", delegate { if (SystemItems.Empty(new System.Windows.Interop.WindowInteropHelper(this).Handle)) { binFull = null; CheckRecycleBin(); } });
@@ -379,6 +380,7 @@ namespace ClearDesk
                     Program.RefreshDock();
                 }
             }));
+            if (!SystemItems.IsSystem(path) && !LaunchpadStore.IsPinned(path)) menu.Items.Add(Item("固定到启动台", delegate { LaunchpadStore.Pin(new[] { path }); }));
             menu.Items.Add(Item("从这个格子移除引用", delegate
             {
                 State.Items.Remove(path);

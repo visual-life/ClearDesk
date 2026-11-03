@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -415,6 +415,8 @@ namespace ClearDesk
         ContextMenu EntryMenu(DockEntry entry)
         {
             var menu = new ContextMenu();
+            string adminPath = entry.PinPath ?? (entry.Identity == null ? null : entry.Identity.Exe);
+            if (AdminRun.Supported(adminPath)) { var admin = Item("以管理员身份运行", delegate { AdminRun.Run(adminPath); }); admin.Tag = "admin"; menu.Items.Add(admin); menu.Items.Add(new Separator()); }
             menu.Items.Add(Item(entry.Pinned ? "取消固定" : "固定到 Dock", delegate
             {
                 if (entry.Pinned)
@@ -429,6 +431,8 @@ namespace ClearDesk
                 Program.Save();
                 Rebuild();
             }));
+            string padPath = entry.PinPath; if (padPath == null && running != null) try { padPath = running.PinTarget(entry); } catch { }
+            if (!string.IsNullOrEmpty(padPath) && !LaunchpadStore.IsPinned(padPath)) menu.Items.Add(Item("固定到启动台", delegate { LaunchpadStore.Pin(new[] { padPath }); }));
             menu.Items.Add(Item("打开所在位置", delegate
             {
                 string path = entry.PinPath ?? entry.Identity.Exe;

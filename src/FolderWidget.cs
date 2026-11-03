@@ -20,6 +20,8 @@ namespace ClearDesk
         public bool ShowHidden;
         /// <summary>2.2.6: "list" (Explorer-like rows) or "icons" (tiles). null in 2.2.5 files.</summary>
         public string View;
+        /// <summary>2.2.9: false = compact (default): thin bottom bar, tight edges, can be very narrow. true = the 2.2.8 layout.</summary>
+        public bool Classic;
     }
 
     internal sealed class FolderEntry
@@ -86,6 +88,8 @@ namespace ClearDesk
 
         /// <summary>Title / header buttons scale: from the user window size only (screen px).</summary>
         internal static double HeaderScale(double winW, double winH) { return Math.Round(Math.Max(.8, Math.Min(1.7, Math.Min(winW / 220, winH / 420))), 2); }
+        /// <summary>2.2.9 compact bar: grows with the width (like the icons), never below 0.9 so the title stays readable at 120 px.</summary>
+        internal static double CompactBarScale(double winW, double winH) { return Math.Round(Math.Max(.9, Math.Min(1.6, Math.Min(winW / 170, winH / 260))), 2); }
         /// <summary>Keeps the previous size when the new one differs by one step and the list height moved less than 3 px since that size was chosen (no flicker at a threshold).</summary>
         internal static ListSize Hysteresis(ListSize prev, ListSize next, double prevH, double h)
         {
@@ -140,8 +144,14 @@ namespace ClearDesk
             if (data.View != "list" && data.View != "icons") data.View = string.IsNullOrEmpty(data.Path) ? "list" : "icons";     // new widget: list; a 2.2.5 widget keeps its tiles
             Heading.Text = "文件夹映射";
             title = Heading;
-            var pick = IconButton("\uE8DA", "选择文件夹…", delegate { ChooseFolder(); });
+            pick = IconButton("\uE8DA", "选择文件夹…", delegate { ChooseFolder(); });
             AddHeaderButton(pick);
+            // 2.2.9 compact bar (bottom): 列表 / 图标, 打开文件夹, 更多
+            more = BarButton("\uE712", "更多", delegate { var m = ContextMenu; if (m != null) { m.PlacementTarget = more; m.Placement = System.Windows.Controls.Primitives.PlacementMode.Top; m.IsOpen = true; } });
+            openBtn = BarButton("\uE838", "在资源管理器中打开", delegate { if (Directory.Exists(data.Path)) Open(data.Path); else ChooseFolder(); });
+            viewBtn = BarButton("\uE8FD", "列表 / 图标视图", delegate { SetView(IsList ? "icons" : "list"); });
+            AddHeaderButton(viewBtn); AddHeaderButton(openBtn); AddHeaderButton(more);      // left to right: 视图, 打开, 更多
+            Heading.TextTrimming = TextTrimming.CharacterEllipsis;
             grid.Margin = new Thickness(0, 0, 0, 4);
             scroller = new ScrollViewer { Content = grid, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false, PanningMode = PanningMode.VerticalOnly };
             scroller.PreviewMouseWheel += (s, e) => { scroller.ScrollToVerticalOffset(scroller.VerticalOffset - e.Delta / 2.4); e.Handled = true; };
@@ -153,6 +163,7 @@ namespace ClearDesk
             var host = new DockPanel(); host.Children.Add(note); host.Children.Add(root);
             Body.Children.Add(host);
             scroller.SizeChanged += delegate { QueueMetrics(); };      // window size settles; metrics read only the user size so this cannot loop
+            AddMenuItem("紧凑模式（标题在底部）", delegate { data.Classic = !data.Classic; Save(); ApplyCompact(); QueueMetrics(); });
             AddMenuItem("视图：列表 / 图标", delegate { SetView(IsList ? "icons" : "list"); });
             AddMenuItem("刷新", Refresh);
             AddMenuItem("图标大小：大 / 中 / 小", delegate { data.IconSize = data.IconSize >= 56 ? 32 : data.IconSize >= 44 ? 64 : 44; Save(); Refresh(); });
@@ -164,8 +175,44 @@ namespace ClearDesk
             rewatch = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(5) };
             rewatch.Tick += delegate { if (Directory.Exists(data.Path)) { rewatch.Stop(); Watch(); Refresh(); } };
             Watch();
+            ApplyCompact();
             Refresh();
         }
+
+        readonly Button pick, more, openBtn, viewBtn;
+        Button BarButton(string glyph, string tip, Action click)
+        {
+            var b = IconButton(glyph, tip, click, 10); b.Width = 20; b.Height = 18; b.Margin = new Thickness(1, 0, 0, 0); b.Opacity = .75;
+            return b;
+        }
+        internal bool Compact { get { return !data.Classic; } }
+        internal const double CompactMinW = 120, CompactMinH = 96;
+        protected override double MinCustomW { get { return Compact ? CompactMinW : base.MinCustomW; } }
+        protected override double MinCustomH { get { return Compact ? CompactMinH : base.MinCustomH; } }
+        internal TextBlock TestTitle { get { return title; } }
+        internal void TestToggleCompact() { data.Classic = !data.Classic; Save(); ApplyCompact(); QueueMetrics(); }
+        internal Button TestViewButton { get { return viewBtn; } }
+        internal Button TestMoreButton { get { return more; } }
+        internal Button TestOpenButton { get { return openBtn; } }
+        /// <summary>2.2.9: compact = almost no edge, the title in a thin bar at the bottom with small buttons on the right (like other desktop folder widgets); classic = 2.2.8.</summary>
+        void ApplyCompact()
+        {
+            bool c = Compact;
+            Layout.Margin = c ? new Thickness(5, 5, 5, 6) : new Thickness(20);
+            Header.Margin = c ? new Thickness(2, 3, 20, 0) : new Thickness(0, 0, 0, 18);      // right: room for the resize corner
+            DockPanel.SetDock(Header, c ? Dock.Bottom : Dock.Top);
+            Heading.FontSize = c ? 11.5 : 13;
+            Heading.Opacity = c ? .9 : 1;
+            Heading.VerticalAlignment = VerticalAlignment.Center;
+            pick.Visibility = c ? Visibility.Collapsed : Visibility.Visible;
+            foreach (var b in new[] { more, openBtn, viewBtn }) b.Visibility = c ? Visibility.Visible : Visibility.Collapsed;
+            grid.Margin = c ? new Thickness(0) : new Thickness(0, 0, 0, 4);
+            SetCorner(c ? 12 : 22);
+            UpdateViewGlyph();
+            chromeH = -1;      // the fixed chrome changed: measure it once more (it does not depend on the metrics)
+            // a widget that was narrower than the classic minimum keeps its size; only SetCustomSize clamps
+        }
+        void UpdateViewGlyph() { if (viewBtn != null) ((TextBlock)viewBtn.Content).Text = IsList ? "\uE80A" : "\uE8FD"; }
 
         void Save() { ToolStore.Save(State.Id, data); }
 
@@ -184,30 +231,38 @@ namespace ClearDesk
             double winW = UserW, winH = UserH;                  // screen px, user-set
             if (winW <= 0 || winH <= 0 || Header == null) return;
             // fixed chrome (padding, note, margins) in content units: invariant of every metric below
-            double headNat = Header.ActualHeight;               // untransformed height, the LayoutTransform does not change it
+            double headNat = Compact ? 18 : 26;                 // 2.2.9: the bar height from its buttons (18 / 26), not measured: crisp-text and layout passes made the measured value jump
             if (headNat <= 0 || scroller.ActualHeight <= 0) return;
-            if (chromeH < 0 || Math.Abs(lastS - s) > .0001 || note.IsVisible != lastNote)
+            // fixed chrome in content units, from the margins we set (2.2.9: not measured from a layout pass, which can be one step behind)
             {
-                double win = ActualHeight / s, winWc = ActualWidth / s;
-                chromeH = Math.Max(0, win - scroller.ActualHeight - headNat * appliedHeader);
-                chromeW = Math.Max(0, winWc - scroller.ActualWidth);
-                lastS = s; lastNote = note.IsVisible;
+                var lm = Layout.Margin; var hm = Header.Margin; var bm = Body.Margin;
+                chromeH = lm.Top + lm.Bottom + hm.Top + hm.Bottom + bm.Top + bm.Bottom + 2 + (note.Visibility == Visibility.Visible ? note.ActualHeight + note.Margin.Top + note.Margin.Bottom : 0) + grid.Margin.Top + grid.Margin.Bottom;
+                chromeW = lm.Left + lm.Right + bm.Left + bm.Right + 2;
             }
             // header scale depends on the window size only
-            double hs = FolderLogic.HeaderScale(winW, winH);
+            double hs = Compact ? FolderLogic.CompactBarScale(winW, winH) : FolderLogic.HeaderScale(winW, winH);
             double k = Math.Round(hs / s, 2);
             double W = Math.Max(1, winW - chromeW * s), H = Math.Max(1, winH - (chromeH + headNat * k) * s) - 4;    // screen px of the list area, 4px safety
+            if (Compact)
+            {
+                // 2.2.9: the list height must not depend on the width (a wider widget has a slightly taller bar and edges, which would make
+                // the icons shrink while widening). Use the largest bar / edges this height can get; the real ones are never bigger.
+                double sTop = WidgetLook.ContentScale(winH * 1000, winH, DefaultWidth, DefaultHeight, MinScale, MaxScale);
+                double hsTop = FolderLogic.CompactBarScale(1e6, winH);
+                H = Math.Max(1, winH - chromeH * Math.Max(s, sTop) - headNat * hsTop) - 4;
+            }
             if (IsList)
             {
                 var m = FolderLogic.ListMetrics(W, H, parts.Count);
+                double rowW = Math.Max(60, W / s - 2);      // from the user width, never from the viewport (a scrollbar can not change it)
                 m = FolderLogic.Hysteresis(LastList, m, lastInH, H); if (m.Icon != LastList.Icon || LastList.Row == 0) lastInH = H;
-                LastList = m;
+                LastList = m; TestTrace.Add(winH + ":" + H.ToString("0.0") + ":" + m.Icon + ":" + s.ToString("0.000")); if (TestTrace.Count > 40) TestTrace.RemoveAt(0);
                 foreach (var p in parts)
                 {
                     p.Img.Width = p.Img.Height = m.Icon / s;
                     p.Img.Margin = new Thickness(6 / s * Math.Max(1, m.Icon / 16), 0, 8 / s * Math.Max(1, m.Icon / 16), 0);
                     p.Name.FontSize = m.Font / s;
-                    p.Tile.Height = m.Row / s; p.Tile.Width = double.NaN; p.Tile.HorizontalAlignment = HorizontalAlignment.Stretch;
+                    p.Tile.Height = m.Row / s; p.Tile.Width = rowW;
                 }
             }
             else
@@ -232,6 +287,7 @@ namespace ClearDesk
         }
         double chromeH = -1, chromeW, lastS = -1, lastInH = -1; bool lastNote;
         internal int MetricsRuns;
+        internal readonly List<string> TestTrace = new List<string>();
         double UserW { get { return (State.CustomW > 0 ? State.CustomW : DefaultWidth); } }
         double UserH { get { return (State.CustomH > 0 ? State.CustomH : DefaultHeight); } }
 
@@ -248,7 +304,7 @@ namespace ClearDesk
         protected override void OnResponsive(double extraW, double extraH) { base.OnResponsive(extraW, extraH); QueueMetrics(); }     // user size changed
 
         internal bool IsList { get { return data.View == "list"; } }
-        internal void SetView(string view) { data.View = view == "icons" ? "icons" : "list"; Save(); Refresh(); }
+        internal void SetView(string view) { data.View = view == "icons" ? "icons" : "list"; Save(); UpdateViewGlyph(); Refresh(); }
         internal const double RowHeight = 26, RowFont = 12.5, RowIcon = 18;      // base units: the widget's content scale makes them grow / shrink with the widget
         double RowWidth() { double w = scroller.ViewportWidth > 0 ? scroller.ViewportWidth : scroller.ActualWidth; return Math.Max(60, (w > 0 ? w : 340) - 2); }
 

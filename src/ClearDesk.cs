@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -55,6 +55,7 @@ namespace ClearDesk
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> ToolWidgets = new List<string>();   // 2.2.0: which of the new widgets are on
         public List<string> LaunchpadItems = new List<string>();
+        public List<string> LaunchpadHidden = new List<string>();   // 2.2.9: entries removed from the launchpad (only hidden)
         public int IdleSeconds = 20, DockSize = 48, AnimationMs = 400;
         public double DockOffset = 12;
         public string MusicSource = "auto";
@@ -177,7 +178,7 @@ namespace ClearDesk
 
             if (args.Length > 0 && args[0] == "--uninstall")
             {
-                try { DesktopMenu.Unregister(); } catch (Exception e) { Log(e); }
+                try { DesktopMenu.Unregister(); DesktopMenu.UnregisterPin(); } catch (Exception e) { Log(e); }
                 try { new StartupManager().Disable(); } catch (Exception e) { Log(e); }
                 return;
             }
@@ -268,6 +269,8 @@ namespace ClearDesk
                 if (args.Contains("--update-e2e")) UpdateE2E.Start();
             }
             string requested = WidgetCatalog.Requested(args);
+            var pinRequest = LaunchpadStore.PinArgs(args).ToList();
+            if (pinRequest.Count > 0) { try { LaunchpadStore.Pin(pinRequest); } catch (Exception e) { Log(e); } }
             if (requested != null)
                 App.Dispatcher.BeginInvoke(new Action(delegate { NewWidget(requested); }), DispatcherPriority.ApplicationIdle);
             if (args.Contains("--render"))
@@ -280,7 +283,7 @@ namespace ClearDesk
                 Rebuild();
             }
 
-            if (requested == null && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test") && !args.Contains("--update-e2e"))
+            if (requested == null && pinRequest.Count == 0 && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test") && !args.Contains("--update-e2e"))
                 ShowSettings();
             if (args.Contains("--popup-benchmark"))
                 PopupBenchmark.Start();
@@ -403,6 +406,7 @@ namespace ClearDesk
 
             if (S.LaunchpadItems == null)
                 S.LaunchpadItems = new List<string>();
+            if (S.LaunchpadHidden == null) S.LaunchpadHidden = new List<string>();
             if (S.UpdateMirrors == null) S.UpdateMirrors = new List<string>();
             if (S.UpdateSource == null) S.UpdateSource = "";
             if (S.SkipVersion == null) S.SkipVersion = "";
@@ -467,7 +471,7 @@ namespace ClearDesk
             if (r.S != null)
             {
                 S = r.S; if (S.Boxes == null) S.Boxes = new List<BoxData>(); if (S.Pins == null) S.Pins = new List<string>(); if (S.ToolWidgets == null) S.ToolWidgets = new List<string>();
-                if (S.Notes == null) S.Notes = new List<BoxData>(); if (S.Widgets == null) S.Widgets = new Dictionary<string, BoxData>(); if (S.LaunchpadItems == null) S.LaunchpadItems = new List<string>();
+                if (S.Notes == null) S.Notes = new List<BoxData>(); if (S.Widgets == null) S.Widgets = new Dictionary<string, BoxData>(); if (S.LaunchpadItems == null) S.LaunchpadItems = new List<string>(); if (S.LaunchpadHidden == null) S.LaunchpadHidden = new List<string>();
                 ConfigStore.Migrate(S); ConfigStore.Sanitize(S);
                 LogText("settings.json 又可以读取了，已使用其中保存的设置。");
                 try { if (App != null) App.Dispatcher.BeginInvoke(new Action(Rebuild)); } catch { }
@@ -708,6 +712,8 @@ namespace ClearDesk
         static void HandleRemote(string[] args)
         {
             if (args != null && args.Contains("--startup")) return; // a second autostart launch must not pop the settings window
+            var pins = LaunchpadStore.PinArgs(args).ToList();
+            if (pins.Count > 0) { LaunchpadStore.Pin(pins); return; }       // 2.2.9: 固定到启动台 from the Explorer menu
             string kind = WidgetCatalog.Requested(args);
             if (kind != null) NewWidget(kind, PlaceMode.DesktopClick);
             else ShowSettings();

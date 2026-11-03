@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -133,7 +133,7 @@ namespace ClearDesk
                 Close();
             };
             icons.MenuFor = BuildItemMenu;
-            paths = Program.DesktopItems().Concat(Program.S.LaunchpadItems).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            paths = LaunchpadStore.Paths();
             Refresh();
             KeyDown += delegate (object s, KeyEventArgs e)
             {
@@ -160,12 +160,7 @@ namespace ClearDesk
             {
                 if (e.Data.GetDataPresent(DataFormats.FileDrop))
                 {
-                    foreach (var path in (string[])e.Data.GetData(DataFormats.FileDrop))
-                        if (!Program.S.LaunchpadItems.Contains(path))
-                            Program.S.LaunchpadItems.Add(path);
-                    Program.Save();
-                    paths = Program.DesktopItems().Concat(Program.S.LaunchpadItems).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                    Refresh();
+                    LaunchpadStore.Pin((string[])e.Data.GetData(DataFormats.FileDrop));
                 }
             };
             Loaded += async delegate
@@ -208,9 +203,15 @@ namespace ClearDesk
             };
         }
 
+        internal void ReloadItems() { paths = LaunchpadStore.Paths(); Refresh(); }
+        internal IList<string> TestPaths { get { return paths; } }
+
         internal ContextMenu BuildItemMenu(string path)
         {
             var menu = new ContextMenu();
+            var admin = Item("以管理员身份运行", delegate { dismissing = true; if (AdminRun.Run(path)) Close(); else dismissing = false; });
+            admin.Tag = "admin";
+            if (AdminRun.Supported(path)) { menu.Items.Add(admin); menu.Items.Add(new Separator()); }
             menu.Items.Add(Item("固定到 Dock", delegate
             {
                 if (!Program.S.Pins.Contains(path)) { Program.S.Pins.Add(path); Program.Save(); Program.RefreshDock(); }
@@ -224,6 +225,15 @@ namespace ClearDesk
             if (send.Items.Count > 0) send.Items.Add(new Separator());
             send.Items.Add(Item("新建收纳格并添加", delegate { SendItem(path, null); }));
             menu.Items.Add(send);
+            // 2.2.9: edit the launchpad (only the entry; the real file stays where it is)
+            menu.Items.Add(new Separator());
+            if (LaunchpadStore.IsPinned(path))
+            {
+                var pinned = Program.S.LaunchpadItems; int i = pinned.FindIndex(x => string.Equals(x, path, StringComparison.OrdinalIgnoreCase));
+                var left = Item("向前移动", delegate { LaunchpadStore.Move(path, -1); }); left.IsEnabled = i > 0; menu.Items.Add(left);
+                var right = Item("向后移动", delegate { LaunchpadStore.Move(path, 1); }); right.IsEnabled = i >= 0 && i < pinned.Count - 1; menu.Items.Add(right);
+            }
+            menu.Items.Add(Item("从启动台移除", delegate { LaunchpadStore.Remove(path); }));
             return menu;
         }
         void SendItem(string path, BoxData box)
@@ -287,6 +297,11 @@ namespace ClearDesk
             var add = new MenuItem { Header = "添加到启动台…", Icon = MenuTheme.Glyph("\uE710") };
             add.Click += delegate { AddFiles(); };
             menu.Items.Add(add);
+            var restore = new MenuItem { Header = "恢复已移除的项目", Icon = MenuTheme.Glyph("\uE777") };
+            restore.SubmenuOpened += delegate { FillRestore(restore); };
+            FillRestore(restore);
+            menu.Opened += delegate { FillRestore(restore); };
+            menu.Items.Add(restore);
             if (settings != null)
             {
                 menu.Items.Add(new Separator());
@@ -294,6 +309,22 @@ namespace ClearDesk
             }
             return menu;
         }
+
+        internal static void FillRestore(MenuItem restore)
+        {
+            restore.Items.Clear();
+            var removed = LaunchpadStore.Removed;
+            foreach (var r in removed)
+            {
+                string target = r;
+                string name = SystemItems.IsSystem(r) ? SystemItems.NameOf(r) : System.IO.Path.GetFileNameWithoutExtension(r);
+                restore.Items.Add(new MenuItem { Header = string.IsNullOrEmpty(name) ? r : name, ToolTip = r });
+                ((MenuItem)restore.Items[restore.Items.Count - 1]).Click += delegate { LaunchpadStore.Restore(target); };
+            }
+            if (removed.Count > 1) { restore.Items.Add(new Separator()); var all = new MenuItem { Header = "全部恢复" }; all.Click += delegate { LaunchpadStore.Restore(null); }; restore.Items.Add(all); }
+            if (removed.Count == 0) restore.Items.Add(new MenuItem { Header = "（没有已移除的项目）", IsEnabled = false });
+        }
+        internal ContextMenu TestBlankMenu() { return Menu(); }
 
         bool OwnsPopup(IntPtr h)
         {
@@ -382,12 +413,7 @@ namespace ClearDesk
             };
             if (d.ShowDialog(this) == true)
             {
-                foreach (var p in d.FileNames)
-                    if (!Program.S.LaunchpadItems.Contains(p))
-                        Program.S.LaunchpadItems.Add(p);
-                Program.Save();
-                paths = Program.DesktopItems().Concat(Program.S.LaunchpadItems).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                Refresh();
+                LaunchpadStore.Pin(d.FileNames);
             }
 
             dismissing = false;

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
@@ -135,12 +135,26 @@ namespace ClearDesk
             foreach (UIElement e in Body.Children) { var f = e as FrameworkElement; if (f != null) f.VerticalAlignment = extraH > 1 ? VerticalAlignment.Center : VerticalAlignment.Stretch; }
         }
 
+        /// <summary>Smallest size the user can drag the widget to (2.2.9: the folder widget goes much narrower).</summary>
+        protected virtual double MinCustomW { get { return baseW * MinScale; } }
+        protected virtual double MinCustomH { get { return baseH * MinScale; } }
+        internal double TestMinW { get { return MinCustomW; } }
+        internal double TestMinH { get { return MinCustomH; } }
+        /// <summary>2.2.9: corner radius of the frame and the clip (content units).</summary>
+        internal double CornerSize { get; private set; } = 22;
+        protected void SetCorner(double r)
+        {
+            CornerSize = r;
+            if (Frame != null) Frame.CornerRadius = new CornerRadius(r);
+            if (Root != null && ActualWidth > 0) { double cw = ActualWidth / ContentScale, ch = ActualHeight / ContentScale; Root.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, cw - 2), Math.Max(0, ch - 2)), r, r); }
+        }
+
         internal void SetCustomSize(double w, double h, bool save = true)
         {
             if (!ScalesContent || double.IsNaN(baseW) || double.IsNaN(baseH)) return;
             State.Scale = 1;
-            State.CustomW = Math.Round(Math.Max(baseW * MinScale, Math.Min(baseW * MaxSizeFactor, w)), 1);
-            State.CustomH = Math.Round(Math.Max(baseH * MinScale, Math.Min(baseH * MaxSizeFactor, h)), 1);
+            State.CustomW = Math.Round(Math.Max(MinCustomW, Math.Min(baseW * MaxSizeFactor, w)), 1);
+            State.CustomH = Math.Round(Math.Max(MinCustomH, Math.Min(baseH * MaxSizeFactor, h)), 1);
             if (Math.Abs(State.CustomW - baseW) < .5 && Math.Abs(State.CustomH - baseH) < .5) { State.CustomW = 0; State.CustomH = 0; }
             ApplySize();
             if (save) Program.Save();
@@ -192,7 +206,7 @@ namespace ClearDesk
                 if (e.LeftButton != MouseButtonState.Pressed) { active = resizing = false; g.ReleaseMouseCapture(); Program.Save(); GuideOverlay.Hide(); return; }
                 var dpi = VisualTreeHelper.GetDpi(this); var now = System.Windows.Forms.Cursor.Position;
                 double w = x ? w0 + (now.X - start.X) / dpi.DpiScaleX : w0, h = y ? h0 + (now.Y - start.Y) / dpi.DpiScaleY : h0;
-                w = Math.Max(baseW * MinScale, Math.Min(baseW * MaxSizeFactor, w)); h = Math.Max(baseH * MinScale, Math.Min(baseH * MaxSizeFactor, h));
+                w = Math.Max(MinCustomW, Math.Min(baseW * MaxSizeFactor, w)); h = Math.Max(MinCustomH, Math.Min(baseH * MaxSizeFactor, h));
                 if (Program.S.Magnet && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
                 {
                     var r = MagnetSnap.SnapResize(new Rect(Left, Top, w, h), Program.SnapTargets(this), CursorInfo.Areas(this), MagnetSnap.Threshold, x, y);
@@ -366,7 +380,7 @@ namespace ClearDesk
             SizeChanged += delegate
             {
                 double cw = ActualWidth / ContentScale, ch = ActualHeight / ContentScale;
-                Root.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, cw - 2), Math.Max(0, ch - 2)), 22, 22);
+                Root.Clip = new RectangleGeometry(new Rect(0, 0, Math.Max(0, cw - 2), Math.Max(0, ch - 2)), CornerSize, CornerSize);
                 UpdatePaper();
             };
             ContextMenu = Menu();
