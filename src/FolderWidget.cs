@@ -18,6 +18,8 @@ namespace ClearDesk
         public string Path = "";
         public int IconSize = 44;
         public bool ShowHidden;
+        /// <summary>2.2.6: "list" (Explorer-like rows) or "icons" (tiles). null in 2.2.5 files.</summary>
+        public string View;
     }
 
     internal sealed class FolderEntry
@@ -88,6 +90,7 @@ namespace ClearDesk
         public FolderWindow() : base("folder", "文件夹映射", SystemParameters.WorkArea.Left + 380, SystemParameters.WorkArea.Top + 120, 380, 280)
         {
             data = ToolStore.Load<FolderData>(State.Id);
+            if (data.View != "list" && data.View != "icons") data.View = string.IsNullOrEmpty(data.Path) ? "list" : "icons";     // new widget: list; a 2.2.5 widget keeps its tiles
             Heading.Text = "文件夹映射";
             title = Heading;
             var pick = IconButton("\uE8DA", "选择文件夹…", delegate { ChooseFolder(); });
@@ -102,6 +105,8 @@ namespace ClearDesk
             var root = new Grid(); root.Children.Add(scroller); root.Children.Add(emptyPanel);
             var host = new DockPanel(); host.Children.Add(note); host.Children.Add(root);
             Body.Children.Add(host);
+            scroller.SizeChanged += delegate { if (IsList) { double w = RowWidth(); foreach (FrameworkElement c in grid.Children) c.Width = w; } };
+            AddMenuItem("视图：列表 / 图标", delegate { SetView(IsList ? "icons" : "list"); });
             AddMenuItem("刷新", Refresh);
             AddMenuItem("图标大小：大 / 中 / 小", delegate { data.IconSize = data.IconSize >= 56 ? 32 : data.IconSize >= 44 ? 64 : 44; Save(); Refresh(); });
             AddMenuItem("显示 / 不显示隐藏文件", delegate { data.ShowHidden = !data.ShowHidden; Save(); Refresh(); });
@@ -116,6 +121,11 @@ namespace ClearDesk
         }
 
         void Save() { ToolStore.Save(State.Id, data); }
+
+        internal bool IsList { get { return data.View == "list"; } }
+        internal void SetView(string view) { data.View = view == "icons" ? "icons" : "list"; Save(); Refresh(); }
+        internal const double RowHeight = 26, RowFont = 12.5, RowIcon = 18;      // base units: the widget's content scale makes them grow / shrink with the widget
+        double RowWidth() { double w = scroller.ViewportWidth > 0 ? scroller.ViewportWidth : scroller.ActualWidth; return Math.Max(60, (w > 0 ? w : 340) - 2); }
 
         void ChooseFolder()
         {
@@ -168,7 +178,8 @@ namespace ClearDesk
             else if (total == 0) { note.Text = "这个文件夹是空的"; note.Visibility = Visibility.Visible; }
             else if (total > items.Count) { note.Text = "只显示前 " + items.Count + " 项（共 " + total + " 项）"; note.Visibility = Visibility.Visible; }
             else note.Visibility = Visibility.Collapsed;
-            int size = Math.Max(24, Math.Min(96, data.IconSize));
+            int size = IsList ? (int)RowIcon : Math.Max(24, Math.Min(96, data.IconSize));
+            bool list = IsList;
             var pending = new List<KeyValuePair<Image, string>>();
             foreach (var it in items)
             {
@@ -176,9 +187,21 @@ namespace ClearDesk
                 var img = new Image { Width = size, Height = size, Stretch = Stretch.Uniform, SnapsToDevicePixels = true };
                 RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
                 pending.Add(new KeyValuePair<Image, string>(img, item.Path));
-                var name = new TextBlock { Text = item.Name, FontSize = 11.5, Foreground = Brushes.White, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 32, Width = size + 34, Margin = new Thickness(0, 4, 0, 0) };
-                var stack = new StackPanel(); stack.Children.Add(img); stack.Children.Add(name);
-                var tile = new Border { Child = stack, Width = size + 40, Padding = new Thickness(3, 6, 3, 5), Margin = new Thickness(1), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, ToolTip = item.Name + "\n" + item.Path, Cursor = Cursors.Hand, Tag = item };
+                Border tile;
+                if (list)
+                {
+                    // Explorer-like row: small icon + one line of name, ellipsis at the end
+                    img.Margin = new Thickness(6, 0, 8, 0); img.VerticalAlignment = VerticalAlignment.Center;
+                    var name = new TextBlock { Text = item.Name, FontSize = RowFont, Foreground = Brushes.White, TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+                    var row = new DockPanel { LastChildFill = true }; DockPanel.SetDock(img, Dock.Left); row.Children.Add(img); row.Children.Add(name);
+                    tile = new Border { Child = row, Height = RowHeight, Width = RowWidth(), Margin = new Thickness(1, 0, 1, 1), CornerRadius = new CornerRadius(5), Background = Brushes.Transparent, ToolTip = item.Name + "\n" + item.Path, Cursor = Cursors.Hand, Tag = item };
+                }
+                else
+                {
+                    var name = new TextBlock { Text = item.Name, FontSize = 11.5, Foreground = Brushes.White, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 32, Width = size + 34, Margin = new Thickness(0, 4, 0, 0) };
+                    var stack = new StackPanel(); stack.Children.Add(img); stack.Children.Add(name);
+                    tile = new Border { Child = stack, Width = size + 40, Padding = new Thickness(3, 6, 3, 5), Margin = new Thickness(1), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, ToolTip = item.Name + "\n" + item.Path, Cursor = Cursors.Hand, Tag = item };
+                }
                 tile.MouseEnter += delegate { if (tile != selected) tile.Background = Hover; };
                 tile.MouseLeave += delegate { if (tile != selected) tile.Background = Brushes.Transparent; };
                 tile.MouseLeftButtonDown += (s, e) =>

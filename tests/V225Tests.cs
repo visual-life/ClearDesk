@@ -19,14 +19,14 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version == "2.2.5", "2.2.5 version string");
+            check(SettingsWindow.Version.StartsWith("2.2."), "2.2.5 version string (" + SettingsWindow.Version + ")");
             check(ToolWidgets.Kinds.Any(k => k.Key == "folder") && ToolWidgets.IsMulti("folder"), "2.2.5 folder widget: registered as a widget kind with several instances");
             check(DesktopServices.BalloonTitle("TB-04").Contains("被占用") && DesktopServices.BalloonTitle("TB-03").Contains("不一致") && DesktopServices.BalloonTitle("TB-04") != DesktopServices.BalloonTitle("TB-03"), "2.2.5 TB-04: the notice title tells 'in use' from 'content differs'");
             check(DesktopServices.BusyBackoffSeconds.SequenceEqual(new[] { 1, 2, 4, 8, 15, 30 }), "2.2.5 TB-04: silent retry backoff is 1,2,4,8,15,30 s");
             var asm = typeof(V225Tests).Assembly;
             check(asm.GetManifestResourceNames().Contains(ComponentPack.AnchorResource) && !asm.GetManifestResourceNames().Contains(ComponentPack.ResourceName), "2.2.5 360: ClearDesk.exe no longer carries the TranslucentTB files (only their manifest)");
             var fv = FileVersionInfo.GetVersionInfo(asm.Location);
-            check(fv.FileVersion == "2.2.5.0" && fv.CompanyName == "visual-life" && fv.ProductName == "ClearDesk" && !string.IsNullOrEmpty(fv.LegalCopyright), "2.2.5 360: the exe has a complete version resource (" + fv.FileVersion + ", " + fv.CompanyName + ")");
+            check(fv.FileVersion == SettingsWindow.Version + ".0" && fv.CompanyName == "visual-life" && fv.ProductName == "ClearDesk" && !string.IsNullOrEmpty(fv.LegalCopyright), "2.2.5 360: the exe has a complete version resource (" + fv.FileVersion + ", " + fv.CompanyName + ")");
             Classify(check);
             FolderRules(check);
         }
@@ -259,7 +259,8 @@ namespace ClearDesk
                 for (int i = 0; i < 30 && w1.Shown != 13; i++) await Task.Delay(100);
                 check(w1.Shown == 13, "2.2.5 folder widget: a deleted file disappears by itself");
 
-                // reflow on resize
+                // reflow on resize (tile view; 2.2.6 made the list view the default)
+                w1.SetView("icons"); await Task.Delay(300);
                 w1.Width = 300; await Task.Delay(300);
                 double y300 = Rows(w1);
                 w1.Width = 700; await Task.Delay(300);

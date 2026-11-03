@@ -42,6 +42,11 @@ namespace ClearDesk
             try
             {
                 await Task.Delay(1200);
+                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v226")      // developer shortcut: only the 2.2.6 tests
+                {
+                    V226Tests.Rules(Check); await V226Tests.Run(Check);
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v225desk")  // developer: widgets held open for an external Show desktop check
                 {
                     if (Environment.GetEnvironmentVariable("CLEARDESK_NOKEEPER") == "1") DesktopKeeper.Stop();
