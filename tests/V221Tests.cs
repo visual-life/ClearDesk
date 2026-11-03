@@ -308,9 +308,10 @@ namespace ClearDesk
         {
             var failed = SystemItems.All.Where(i => Native.Icon(i.Path) == null).Select(i => i.Name).ToList();
             check(failed.Count == 0, "system icons: every system icon has a real shell icon" + (failed.Count > 0 ? " — missing: " + string.Join(",", failed) : ""));
-            var oldFull = SystemItems.RecycleBinFull; var oldFlag = SystemItems.DesktopFlag; var oldEmpty = SystemItems.EmptyAction;
+            var oldFull = SystemItems.RecycleBinFull; var oldFlag = SystemItems.DesktopFlag; var oldEmpty = SystemItems.EmptyAction; var oldProbe = SystemItems.RecycleBinProbe;
             try
             {
+                SystemItems.RecycleBinProbe = () => null;   // 2.2.5: drive the icon from the injectable shell result, not the real folder probe
                 SystemItems.RecycleBinFull = () => false; var e = Native.Icon(SystemItems.RecycleBin.Path);
                 SystemItems.RecycleBinFull = () => true; var f = Native.Icon(SystemItems.RecycleBin.Path);
                 check(e != null && f != null && !IconBytes(e).SequenceEqual(IconBytes(f)), "system icons: the recycle bin icon differs between empty and full");
@@ -340,7 +341,7 @@ namespace ClearDesk
                 dw.SetSystemItem(SystemItems.Computer.Path, false); check(!dw.HasItem(SystemItems.Computer.Path) && desk.Excluded.Contains(SystemItems.Computer.Path), "organizer: a collected system icon can be hidden from the box");
                 dw.SetSystemItem(SystemItems.Computer.Path, true); check(dw.HasItem(SystemItems.Computer.Path) && !desk.Excluded.Contains(SystemItems.Computer.Path), "organizer: and shown again");
             }
-            finally { SystemItems.RecycleBinFull = oldFull; SystemItems.DesktopFlag = oldFlag; SystemItems.EmptyAction = oldEmpty; }
+            finally { SystemItems.RecycleBinFull = oldFull; SystemItems.DesktopFlag = oldFlag; SystemItems.EmptyAction = oldEmpty; SystemItems.RecycleBinProbe = oldProbe; }
         }
         static byte[] IconBytes(ImageSource source)
         {
