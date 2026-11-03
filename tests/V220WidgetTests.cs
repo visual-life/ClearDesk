@@ -205,7 +205,7 @@ namespace ClearDesk
             finally { ToolStore.TestRoot = oldRoot; try { Directory.Delete(root, true); Directory.Delete(dir, true); Directory.Delete(pics, true); } catch { } }
 
             // ================= 注册 / 菜单 =================
-            check(ToolWidgets.Kinds.Length == 8 && ToolWidgets.Kinds.All(k => ToolWidgets.Descriptions.ContainsKey(k.Key) && ToolWidgets.IsTool(k.Key) && WidgetCatalog.IsKnown(k.Key) && WidgetCatalog.Kinds.Any(c => c.Key == k.Key && c.Value == k.Value)), "widgets: all 8 are registered in the settings list and in the 新建组件 menu");
+            check(ToolWidgets.Kinds.Length == 10 && ToolWidgets.Kinds.All(k => ToolWidgets.Descriptions.ContainsKey(k.Key) && ToolWidgets.IsTool(k.Key) && WidgetCatalog.IsKnown(k.Key) && WidgetCatalog.Kinds.Any(c => c.Key == k.Key && c.Value == k.Value)), "widgets: all 10 (2.2.5: + folder, battery) are registered in the settings list and in the 新建组件 menu");
             check(!ToolWidgets.IsTool("clock") && !ToolWidgets.IsTool("note"), "widgets: the old widgets are not tool widgets");
         }
 

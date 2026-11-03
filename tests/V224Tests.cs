@@ -196,7 +196,7 @@ namespace ClearDesk
                 check(TaskbarComponent.Verify(stale).State == ComponentState.Mismatch, "2.2.4 taskbar: (2.2.3 behaviour) a stale verified.sha256 alone made the folder 'mismatched'");
                 var cs = TaskbarComponent.Verify(stale, pack);
                 check(cs.Ok && cs.Source == "出厂副本" && cs.Code == "TB-00", "2.2.4 taskbar: a stale verified.sha256 in the folder is harmless, the shipped copy is the reference");
-                var s1 = new TaskbarService { Dir = stale, CacheDir = cache, Args = "-n 60 127.0.0.1", ExternalRunning = () => false, PackSource = () => pack, AllowUnverified = () => false };
+                var s1 = new TaskbarService { Dir = stale, CacheDir = cache, Args = "-n 60 127.0.0.1", ExternalRunning = () => false, RunningCopies = () => new System.Collections.Generic.List<RunningCopy>(), PackSource = () => pack, AllowUnverified = () => false };
                 bool st = s1.TryStart();
                 check(st && s1.Failure == null && s1.RunFrom == stale, "2.2.4 taskbar: starts from the install folder although the folder manifest is stale"); V223TaskbarTests.Kill(s1);
 
@@ -206,20 +206,20 @@ namespace ClearDesk
                 V223TaskbarTests.Manifest(other);            // the folder is "consistent" with itself but is not the shipped component
                 var co = TaskbarComponent.Verify(other, pack);
                 check(co.State == ComponentState.Mismatch && co.File == "TranslucentTB.exe" && co.Code == "TB-03", "2.2.4 taskbar: a different TranslucentTB.exe is a mismatch against the shipped copy (TB-03)");
-                var s2 = new TaskbarService { Dir = other, CacheDir = Path.Combine(root, "nogood"), Args = "-n 60 127.0.0.1", ExternalRunning = () => false, PackSource = () => pack, AllowUnverified = () => false };
+                var s2 = new TaskbarService { Dir = other, CacheDir = Path.Combine(root, "nogood"), Args = "-n 60 127.0.0.1", ExternalRunning = () => false, RunningCopies = () => new System.Collections.Generic.List<RunningCopy>(), PackSource = () => pack, AllowUnverified = () => false };
                 bool o2 = s2.TryStart();
                 check(o2 && s2.Repaired != null && TaskbarComponent.Verify(other, pack).Ok, "2.2.4 taskbar: no kept good copy needed: the folder is repaired from the shipped copy and then starts (2.2.3 stopped here with 没有可用的完好备份)");
                 V223TaskbarTests.Kill(s2);
 
                 // a file modified while ClearDesk was not looking (runtime-modified / antivirus rewrite)
                 File.WriteAllBytes(Path.Combine(other, "Xaml.dll"), new byte[] { 1, 2, 3 });
-                var s3 = new TaskbarService { Dir = other, CacheDir = cache, Args = "-n 60 127.0.0.1", ExternalRunning = () => false, PackSource = () => pack, AllowUnverified = () => false };
+                var s3 = new TaskbarService { Dir = other, CacheDir = cache, Args = "-n 60 127.0.0.1", ExternalRunning = () => false, RunningCopies = () => new System.Collections.Generic.List<RunningCopy>(), PackSource = () => pack, AllowUnverified = () => false };
                 check(s3.TryStart() && TaskbarComponent.Verify(other, pack).Ok, "2.2.4 taskbar: a runtime-modified component file is repaired and started"); V223TaskbarTests.Kill(s3);
 
                 // the install folder cannot be written at all (a file where the folder should be): per-user copy
                 string blocker = Path.Combine(root, "afile"); File.WriteAllText(blocker, "x");
                 string run = Path.Combine(root, "taskbar-run");
-                var s4 = new TaskbarService { Dir = Path.Combine(blocker, "taskbar"), CacheDir = cache, RunDirectory = run, Args = "-n 60 127.0.0.1", ExternalRunning = () => false, PackSource = () => pack, AllowUnverified = () => false };
+                var s4 = new TaskbarService { Dir = Path.Combine(blocker, "taskbar"), CacheDir = cache, RunDirectory = run, Args = "-n 60 127.0.0.1", ExternalRunning = () => false, RunningCopies = () => new System.Collections.Generic.List<RunningCopy>(), PackSource = () => pack, AllowUnverified = () => false };
                 bool o4 = s4.TryStart();
                 check(o4 && s4.RunFrom == run && s4.Exe.StartsWith(run, StringComparison.OrdinalIgnoreCase) && TaskbarComponent.Verify(run, pack).Ok, "2.2.4 taskbar: install folder unusable -> the shipped copy is placed in the per-user folder and started from there");
                 V223TaskbarTests.Kill(s4);
@@ -270,7 +270,7 @@ namespace ClearDesk
 
                 // nothing to repair from, folder manifest only: still no exception and a precise reason
                 string lone = V223TaskbarTests.Make(root, "lone"); File.WriteAllText(Path.Combine(lone, "Xaml.dll"), "bad");
-                var s5 = new TaskbarService { Dir = lone, CacheDir = Path.Combine(root, "nocache"), Args = "-n 60 127.0.0.1", ExternalRunning = () => false, PackSource = () => null, AllowUnverified = () => false };
+                var s5 = new TaskbarService { Dir = lone, CacheDir = Path.Combine(root, "nocache"), Args = "-n 60 127.0.0.1", ExternalRunning = () => false, RunningCopies = () => new System.Collections.Generic.List<RunningCopy>(), PackSource = () => null, AllowUnverified = () => false };
                 bool o5 = true; try { o5 = s5.TryStart(); } catch { o5 = true; }
                 check(!o5 && s5.Code == "TB-03" && !string.IsNullOrEmpty(s5.Diag) && s5.Diag.Contains("Xaml.dll"), "2.2.4 taskbar: without any shipped copy a mismatch gives TB-03 and a full diagnosis");
             }

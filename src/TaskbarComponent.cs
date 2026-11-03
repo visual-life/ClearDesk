@@ -83,8 +83,18 @@ namespace ClearDesk
         public ComponentPack(byte[] zipBytes) { zip = zipBytes; }
 
         static ComponentPack embedded; static bool embeddedLoaded;
-        /// <summary>Test hook; null = the compiled-in pack (when this build has one).</summary>
+        internal const string FactoryFile = "taskbar-factory.zip", AnchorResource = "ClearDesk.taskbar.manifest";
+        /// <summary>Test hook; null = the build's factory copy.</summary>
         internal static Func<ComponentPack> Provider;
+        /// <summary>Where the factory copy came from (for the diagnostics).</summary>
+        public string Origin = "";
+        List<KeyValuePair<string, string>> anchor;      // 2.2.5: manifest-only pack (no file contents)
+
+        /// <summary>
+        /// 2.2.5: the build's factory copy. ClearDesk.exe carries only the manifest + version (resource ClearDesk.taskbar.manifest); the files come from
+        /// taskbar-factory.zip next to ClearDesk.exe and are used only when that zip's manifest is exactly the compiled-in one and every file matches it.
+        /// Without a usable zip the pack is "manifest only": still the reference for verification, but it cannot repair anything (the kept copy can).
+        /// </summary>
         public static ComponentPack Current
         {
             get
@@ -93,16 +103,57 @@ namespace ClearDesk
                 if (!embeddedLoaded)
                 {
                     embeddedLoaded = true;
-                    try
-                    {
-                        using (var s = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName))
-                            if (s != null) { var ms = new MemoryStream(); s.CopyTo(ms); embedded = new ComponentPack(ms.ToArray()); }
-                    }
+                    try { embedded = Build(ReadAnchor(), Path.Combine(Program.Base, FactoryFile)); }
                     catch (Exception e) { Program.Log(e); }
                 }
                 return embedded;
             }
         }
+        internal static void Reset() { embeddedLoaded = false; embedded = null; }
+
+        static string ReadAnchor()
+        {
+            using (var s = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(AnchorResource))
+            {
+                if (s == null) return null;
+                using (var r = new StreamReader(s, Encoding.UTF8)) return r.ReadToEnd();
+            }
+        }
+
+        /// <summary>anchorText: "SHA256  name" lines plus "version: x". zipPath: the factory zip (may be missing / damaged / foreign).</summary>
+        internal static ComponentPack Build(string anchorText, string zipPath)
+        {
+            if (anchorText == null) return null;
+            string version = "";
+            var lines = new List<string>();
+            foreach (var raw in anchorText.Split('\n'))
+            {
+                string l = raw.Trim('\r', ' ', '\uFEFF');
+                if (l.StartsWith("version:", StringComparison.OrdinalIgnoreCase)) version = l.Substring(8).Trim(); else if (l.Length > 0) lines.Add(l);
+            }
+            ComponentState bad; var m = TaskbarComponent.ParseManifest(lines, out bad);
+            if (m == null) return null;
+            string note;
+            if (zipPath != null && File.Exists(zipPath))
+            {
+                try
+                {
+                    var z = new ComponentPack(File.ReadAllBytes(zipPath));
+                    if (SameManifest(z.Manifest, m) && z.SelfCheck()) { z.Origin = zipPath; return z; }
+                    note = zipPath + "（与本版本的清单不符，未使用）";
+                }
+                catch (Exception e) { note = zipPath + "（读不了：" + e.Message + "）"; }
+            }
+            else note = "没有 " + FactoryFile;
+            return new ComponentPack(null) { anchor = m, version = version, Origin = "仅清单（" + note + "）" };
+        }
+
+        internal static bool SameManifest(List<KeyValuePair<string, string>> a, List<KeyValuePair<string, string>> b)
+        {
+            return a != null && b != null && a.Count == b.Count && a.All(e => b.Any(x => x.Value.Equals(e.Value, StringComparison.OrdinalIgnoreCase) && x.Key.Equals(e.Key, StringComparison.OrdinalIgnoreCase)));
+        }
+        /// <summary>Has file contents (can repair), not just the manifest.</summary>
+        public bool HasFiles { get { return zip != null; } }
 
         public static ComponentPack FromFolder(string dir)
         {
@@ -122,6 +173,7 @@ namespace ClearDesk
         {
             if (files != null) return files;
             var d = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            if (zip == null) return files = d;
             using (var za = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read))
                 foreach (var e in za.Entries)
                 {
@@ -142,6 +194,7 @@ namespace ClearDesk
             get
             {
                 if (manifest != null) return manifest;
+                if (anchor != null) return manifest = anchor;
                 try
                 {
                     var b = Get("verified.sha256"); if (b == null) return null;
@@ -155,7 +208,7 @@ namespace ClearDesk
         /// <summary>Do the pack's files match the pack's own manifest? A damaged pack must never be used to "repair" anything.</summary>
         public bool SelfCheck()
         {
-            var m = Manifest; if (m == null) return false;
+            var m = Manifest; if (m == null || zip == null) return false;
             foreach (var e in m)
             {
                 var b = Get(e.Value); if (b == null) return false;
@@ -169,12 +222,20 @@ namespace ClearDesk
     {
         [StructLayout(LayoutKind.Sequential)] struct WINTRUST_FILE_INFO { public int cbStruct; [MarshalAs(UnmanagedType.LPWStr)] public string pcwszFilePath; public IntPtr hFile, pgKnownSubject; }
         [StructLayout(LayoutKind.Sequential)] struct WINTRUST_DATA { public int cbStruct; public IntPtr pPolicyCallbackData, pSIPClientData; public int dwUIChoice, fdwRevocationChecks, dwUnionChoice; public IntPtr pFile; public int dwStateAction; public IntPtr hWVTStateData; public IntPtr pwszURLReference; public int dwProvFlags, dwUIContext; public IntPtr pSignatureSettings; }
-        [DllImport("wintrust.dll", CharSet = CharSet.Unicode)] static extern int WinVerifyTrust(IntPtr hwnd, ref Guid action, ref WINTRUST_DATA data);
+        [DllImport("wintrust.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern int WinVerifyTrust(IntPtr hwnd, ref Guid action, ref WINTRUST_DATA data);
 
-        /// <summary>"有效" / "无签名" / "无效(0x…)" — checked offline (no revocation lookup, no UI).</summary>
+        /// <summary>Test hook: replaces the readability probe.</summary>
+        internal static Func<string, string> OpenProbe;
+        /// <summary>
+        /// "有效" / "无签名" / "无效(0x…)" / "未知：文件读不了…" — checked offline (no revocation lookup, no UI).
+        /// 2.2.5: WinVerifyTrust answers TRUST_E_NOSIGNATURE (0x800B0100) also when it could not READ the file (locked by a scanner, in use exclusively); only the
+        /// last error tells the two apart. 2.2.4 printed "无签名" for a file it simply could not open. Now: an unreadable file is "未知", never "无签名".
+        /// </summary>
         public static string Status(string path, out string signer)
         {
             signer = "";
+            string cannot = OpenProbe != null ? OpenProbe(path) : Probe(path);
+            if (cannot != null) return "未知（文件读不了：" + cannot + "，所以无法检查签名；不代表没有签名）";
             try
             {
                 try { var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path)); signer = cert.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false); } catch { }
@@ -188,13 +249,26 @@ namespace ClearDesk
                     d.cbStruct = Marshal.SizeOf(typeof(WINTRUST_DATA));
                     var action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
                     int r = WinVerifyTrust(new IntPtr(-1), ref action, ref d);
+                    int last = Marshal.GetLastWin32Error();
                     if (r == 0) return "有效";
-                    if (unchecked((uint)r) == 0x800B0100) return "无签名";
+                    if (unchecked((uint)r) == 0x800B0100)
+                    {
+                        uint l = unchecked((uint)last);
+                        if (l == 0 || l == 0x800B0100 || l == 0x800B0003 || l == 0x800B0001) return "无签名";      // NOSIGNATURE / SUBJECT_FORM_UNKNOWN / PROVIDER_UNKNOWN
+                        return "未知（验证签名时出错 0x" + last.ToString("X8") + "；不代表没有签名）";
+                    }
                     return "无效(0x" + r.ToString("X8") + ")";
                 }
                 finally { Marshal.FreeHGlobal(p); }
             }
             catch (Exception e) { return "无法检查(" + e.GetType().Name + ")"; }
+        }
+
+        /// <summary>null when the file can be opened for reading (shared, as Windows and the hash check do), else why not.</summary>
+        internal static string Probe(string path)
+        {
+            try { using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) return null; }
+            catch (Exception e) { return e.Message.Trim(); }
         }
     }
 
@@ -336,7 +410,7 @@ namespace ClearDesk
                 if (packOk) ExtractMissingOrWrong(pack, dir);
             }
             catch (Exception e) { how = "还原失败：" + e.Message; return false; }
-            how = cacheOk && !packOk ? "已从备份还原组件" : "已从 ClearDesk 内置的出厂副本还原组件";
+            how = cacheOk && !packOk ? "已从备份还原组件" : "已从 出厂副本（taskbar-factory.zip）还原组件";
             return true;
         }
 
@@ -371,7 +445,7 @@ namespace ClearDesk
             foreach (string old in Directory.GetFiles(dir, "*.bad-*", SearchOption.AllDirectories)) { try { File.Delete(old); } catch { } }
         }
 
-        static void CopyTree(string from, string to, bool onlyDifferent)
+        internal static void CopyTree(string from, string to, bool onlyDifferent)
         {
             Directory.CreateDirectory(to);
             foreach (string f in Directory.GetFiles(from))
@@ -428,10 +502,10 @@ namespace ClearDesk
                 {
                     ExtractMissingOrWrong(pack, runDir);
                     var alt = Verify(runDir, pack);
-                    if (alt.Ok) { note = "安装文件夹里的组件无法修复（" + c.Text + (how != null ? "；" + how : "") + "），已改用 ClearDesk 内置副本释放到：" + runDir; return alt; }
+                    if (alt.Ok) { note = "安装文件夹里的组件无法修复（" + c.Text + (how != null ? "；" + how : "") + "），已改用 出厂副本释放到：" + runDir; return alt; }
                     if (alt.State == ComponentState.Busy) { note = alt.Text; return alt; }
                 }
-                catch (Exception e) { how = (how == null ? "" : how + "；") + "内置副本释放失败：" + e.Message; }
+                catch (Exception e) { how = (how == null ? "" : how + "；") + "出厂副本释放失败：" + e.Message; }
             }
             // (4) opt-in: shipped version + valid signature
             if (allowUnverified && c.State == ComponentState.Mismatch)
@@ -478,7 +552,7 @@ namespace ClearDesk
             var sb = new StringBuilder();
             sb.AppendLine("ClearDesk 所在文件夹：" + Program.Base);
             sb.AppendLine("检查的组件文件夹：" + dir + (Directory.Exists(dir) ? "" : "（不存在）"));
-            sb.AppendLine("出厂副本：" + (pack == null ? "此版本未内置（只能用文件夹里的校验清单）" : (pack.SelfCheck() ? "内置，完好" + (string.IsNullOrEmpty(pack.Version) ? "" : "，TranslucentTB " + pack.Version) : "内置，但自检未通过")));
+            sb.AppendLine("出厂副本：" + (pack == null ? "此版本没有（只能用文件夹里的校验清单）" : (pack.SelfCheck() ? "完好，" + pack.Origin : pack.HasFiles ? "自检未通过，" + pack.Origin : "清单已编译进 ClearDesk.exe，文件：" + pack.Origin) + (string.IsNullOrEmpty(pack.Version) ? "" : "，TranslucentTB " + pack.Version)));
             sb.AppendLine("完好备份：" + CacheText(cache, pack));
             sb.AppendLine("每用户副本：" + (Directory.Exists(RunDir) ? RunDir : "无"));
             var c = Verify(dir, pack);

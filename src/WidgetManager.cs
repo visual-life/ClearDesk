@@ -24,7 +24,7 @@ namespace ClearDesk
 
     internal static class WidgetManager
     {
-        internal static readonly string[] Singletons = { "clock", "weather", "music", "calendar", "almanac", "performance", "quick", "todo", "countdown", "schedule", "clipboard", "netspeed", "launcher", "album", "sunair" };
+        internal static readonly string[] Singletons = { "clock", "weather", "music", "calendar", "almanac", "performance", "quick", "todo", "countdown", "schedule", "clipboard", "netspeed", "launcher", "album", "sunair", "folder", "battery" };
 
         internal static string KindName(string kind)
         {

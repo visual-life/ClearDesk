@@ -83,6 +83,8 @@ namespace ClearDesk
             new KeyValuePair<string, string>("launcher", "快捷启动"),
             new KeyValuePair<string, string>("album", "图片相册"),
             new KeyValuePair<string, string>("sunair", "日出日落 / 空气质量"),
+            new KeyValuePair<string, string>("folder", "文件夹映射"),
+            new KeyValuePair<string, string>("battery", "设备电量"),
         };
         internal static readonly Dictionary<string, string> Descriptions = new Dictionary<string, string>
         {
@@ -94,11 +96,13 @@ namespace ClearDesk
             { "launcher", "文件、文件夹、网址和应用的图标网格，拖入添加，点击打开。" },
             { "album", "选择文件夹或图片轮播，淡入淡出，可设间隔和铺放方式。" },
             { "sunair", "所在地的日出日落时间和空气质量（AQI），位置来自天气设置。" },
+            { "folder", "选择一个文件夹，把里面的文件和子文件夹（图标和名称）显示在桌面上，实时跟随变化，双击打开。" },
+            { "battery", "显示无线鼠标、键盘、耳机的电量（蓝牙、标准 HID、罗技接收器）；读不到的设备显示“不支持读取电量”。" },
         };
 
         // 2.2.2: some kinds can be put on the desktop more than once. The first instance keeps the plain kind as its id (so every 2.2.x file, folder and setting
         // stays valid); further instances are "kind~2", "kind~3", … Each instance has its own settings entry, data file and (album) picture folder.
-        internal static readonly string[] Multi = { "todo", "countdown", "schedule", "launcher", "album" };
+        internal static readonly string[] Multi = { "todo", "countdown", "schedule", "launcher", "album", "folder" };
         internal static bool IsMulti(string kind) { return Multi.Contains(KindOf(kind)); }
         internal static string KindOf(string id) { if (id == null) return null; int i = id.IndexOf('~'); return i < 0 ? id : id.Substring(0, i); }
         internal static int NumberOf(string id) { int i = id == null ? -1 : id.IndexOf('~'); int n; return i >= 0 && int.TryParse(id.Substring(i + 1), out n) && n >= 2 ? n : 1; }
@@ -156,6 +160,8 @@ namespace ClearDesk
                 case "launcher": return new LauncherWindow();
                 case "album": return new AlbumWindow();
                 case "sunair": return new SunAirWindow();
+                case "folder": return new FolderWindow();
+                case "battery": return new BatteryWindow();
             }
             return null;
         }

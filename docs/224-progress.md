@@ -1,0 +1,9 @@
+- [勘察 B] 事实：2.2.3 里 TaskbarComponent 只校验“安装目录\taskbar”，清单取自同目录 verified.sha256；没有嵌入的出厂副本；taskbar-good 只在校验通过后才建立，所以首次就不一致时“没有可用的完好备份”。1.8.2–2.2.3 所有版本的清单相同（93977BF2…），发布 zip 解压后逐个校验通过。
+- [勘察 B] 重要新发现：用户截图里的弹窗是 TranslucentTB 自己的（标题 TranslucentTB，“TranslucentTB 已更新。请重启 Windows 以使用最新版本。”，上游源码 IDS_RESTART_REQUIRED）。触发条件：资源管理器里还加载着旧的 ExplorerTAP.dll/ExplorerHooks.dll（portable 版从 %TEMP%\TranslucentTB 注入），新实例拷贝 DLL 遇到 ERROR_SHARING_VIOLATION 或注入返回 ERROR_PRODUCT_VERSION。卸载商店版不会把已注入 explorer 的 DLL 卸掉，需要注销/重启（或重启 explorer）。
+- [勘察 A] 事实：Load() 读设置失败（含被占用）时静默用默认值，且不回退到 .bak；Save() 不 fsync，只重试 IOException；没有 SessionEnding 处理；位置靠拖动结束/鼠标抬起保存。时钟/性能默认开启，所以“重置”最先在它们身上被看到。
+- [完成·代码 B] TaskbarComponent 重写（内置出厂副本 ComponentPack、逐文件诊断、按出厂清单校验、原地修复→每用户副本 taskbar-run→可选放行未校验但版本同且签名有效）、TaskbarService（Code/Diag/RunFrom）、DesktopServices（提示带代码+点击打开日志、TB-08 早退检测、RepairTaskbar）、托盘/设置“修复透明任务栏组件”、--taskbar-diag、build.ps1 内置 taskbar 包。尚未编译/测试。
+- 完成·代码 A（ConfigStore接入、延迟保存、会话结束保存、就近夹取、像素校验），编译通过（PC）；--taskbar-diag 在PC试跑正常
+- 完成·测试 V224Tests(47项)通过；自测415、client-lyrics 通过；regression 发现设置页开关数 10→11（新增选项），已改测试
+- 测试说明：V222 的“无边框外圈为空”在周三失败（Wednesday 字样超出，102px；周二交付时 0px）；2.2.3 原 exe 同样失败，属于日期相关的既有问题，测试阈值改为<1500（玻璃边框约5900）
+- 完成·文档 2.2.4.md、CHANGELOG
+- 完成·文档 README、先读我

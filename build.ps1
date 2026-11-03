@@ -40,8 +40,10 @@ foreach ($name in @('System.Runtime.dll','System.Runtime.WindowsRuntime.dll','Sy
     $refs += '/reference:' + $ref
 }
 $sources = @('src','tests','third_party\lunar','third_party\qrc') | ForEach-Object { Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot $_) -Filter '*.cs' -Recurse | Select-Object -ExpandProperty FullName }
-# 2.2.4: the verified optional taskbar component (TranslucentTB) is also compiled into ClearDesk.exe as a factory copy (resource ClearDesk.taskbar.zip). ClearDesk checks and
-# repairs the taskbar folder against it, so a stale/hand-copied verified.sha256 or a damaged folder can never leave the feature unusable. Builds without the component (CI) skip it.
+# 2.2.5: the verified optional taskbar component (TranslucentTB) is shipped as a SEPARATE factory copy, taskbar-factory.zip, next to ClearDesk.exe. Only its manifest (the
+# SHA-256 of every file) and the TranslucentTB version are compiled into ClearDesk.exe, as the trust anchor: ClearDesk uses the zip only when it matches that manifest.
+# (2.2.4 compiled the whole component, i.e. other programs' exe/dll files, into ClearDesk.exe; an executable that carries and writes out other executables is a
+# classic "dropper" pattern for antivirus heuristics.) Builds without the component (CI) skip all of this.
 $extraResources = @()
 if (-not $TaskbarDirectory) { $TaskbarDirectory = Join-Path $PSScriptRoot 'dist\taskbar' }
 if (Test-Path -LiteralPath (Join-Path $TaskbarDirectory 'verified.sha256')) {
@@ -53,20 +55,23 @@ if (Test-Path -LiteralPath (Join-Path $TaskbarDirectory 'verified.sha256')) {
     }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $pack = Join-Path ([IO.Path]::GetTempPath()) ('ClearDesk.taskbar-' + [Guid]::NewGuid().ToString('N') + '.zip')
+    $ver = (Get-Item -LiteralPath (Join-Path $TaskbarDirectory 'TranslucentTB.exe')).VersionInfo.FileVersion
+    $pack = Join-Path $OutputDirectory 'taskbar-factory.zip'
+    if (Test-Path -LiteralPath $pack) { Remove-Item -LiteralPath $pack -Force }
     $za = [IO.Compression.ZipFile]::Open($pack, 'Create')
     try {
-        foreach ($f in Get-ChildItem -LiteralPath $TaskbarDirectory -Recurse -File) {
+        foreach ($f in Get-ChildItem -LiteralPath $TaskbarDirectory -Recurse -File | Sort-Object FullName) {
             if ($f.Extension -eq '.zip') { continue }
             $rel = $f.FullName.Substring($TaskbarDirectory.TrimEnd('\').Length + 1).Replace('\', '/')
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $f.FullName, $rel, 'Optimal')
         }
-        $ver = (Get-Item -LiteralPath (Join-Path $TaskbarDirectory 'TranslucentTB.exe')).VersionInfo.FileVersion
         $entry = $za.CreateEntry('version.txt')
         $w = New-Object IO.StreamWriter($entry.Open()); $w.Write($ver); $w.Dispose()
     } finally { $za.Dispose() }
-    $extraResources += ('/resource:' + $pack + ',ClearDesk.taskbar.zip')
-    Write-Host "Embedded taskbar factory copy ($([math]::Round((Get-Item -LiteralPath $pack).Length / 1MB, 2)) MB) from $TaskbarDirectory"
+    $anchor = Join-Path ([IO.Path]::GetTempPath()) ('ClearDesk.taskbar-' + [Guid]::NewGuid().ToString('N') + '.manifest')
+    [IO.File]::WriteAllText($anchor, ([IO.File]::ReadAllText((Join-Path $TaskbarDirectory 'verified.sha256')).Trim() + "`n" + 'version: ' + $ver + "`n"), (New-Object Text.UTF8Encoding($false)))
+    $extraResources += ('/resource:' + $anchor + ',ClearDesk.taskbar.manifest')
+    Write-Host "Taskbar factory copy written to $pack ($([math]::Round((Get-Item -LiteralPath $pack).Length / 1MB, 2)) MB); manifest compiled in, from $TaskbarDirectory"
 }
 & $Compiler /nologo /target:winexe /platform:x64 /optimize+ /deterministic+ /utf8output ('/out:' + (Join-Path $OutputDirectory 'ClearDesk.exe')) ('/win32manifest:' + (Join-Path $PSScriptRoot 'config\app.manifest')) ('/win32icon:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico')) ('/resource:' + (Join-Path $PSScriptRoot 'assets\ClearDesk.ico') + ',ClearDesk.AppIcon.ico') $extraResources $refs $sources
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }

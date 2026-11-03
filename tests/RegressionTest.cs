@@ -42,6 +42,17 @@ namespace ClearDesk
             try
             {
                 await Task.Delay(1200);
+                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v225desk")  // developer: widgets held open for an external Show desktop check
+                {
+                    if (Environment.GetEnvironmentVariable("CLEARDESK_NOKEEPER") == "1") DesktopKeeper.Stop();
+                    await V225Tests.Hold(Check);
+                    return;
+                }
+                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v225")      // developer shortcut: only the 2.2.5 tests
+                {
+                    V225Tests.Rules(Check); await V225Tests.Run(Check);
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v224")      // developer shortcut: only the 2.2.4 tests
                 {
                     V224Tests.Rules(Check); await V224Tests.Run(Check);

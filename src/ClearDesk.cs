@@ -148,6 +148,18 @@ namespace ClearDesk
             if (args.Length > 0 && args[0] == "--update-test-server") { UpdateTestServer.RunBlocking(args); return; }
             if (args.Length > 0 && args[0] == "--dock-activate") { DockDiag.Activate(args); return; }       // 2.2.0: run the Dock's restore code on one running app (verification)
             if (args.Length > 0 && args[0] == "--mixer-diag") { MixerDiag.Run(args); return; }               // 2.2.1: list the audio sessions the volume mixer page shows
+            if (args.Length > 0 && args[0] == "--battery-diag")           // 2.2.5: which wireless devices report a battery level (read-only)
+            {
+                var sbd = new System.Text.StringBuilder("ClearDesk " + SettingsWindow.Version + " —— 设备电量诊断（只读） " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + Environment.NewLine);
+                var t0 = DateTime.Now; var readings = DeviceBattery.Scan();
+                sbd.AppendLine("用时 " + (DateTime.Now - t0).TotalSeconds.ToString("0.0") + " 秒，" + readings.Count + " 个设备：");
+                foreach (var r in readings) sbd.AppendLine("  " + r);
+                sbd.AppendLine("过程：");
+                lock (DeviceBattery.Trace) foreach (var l in DeviceBattery.Trace) sbd.AppendLine("  " + l);
+                string outPath = args.Length > 1 ? args[1] : Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "battery-diag.txt");
+                File.WriteAllText(outPath, sbd.ToString(), new System.Text.UTF8Encoding(true));
+                return;
+            }
             if (args.Length > 0 && args[0] == "--taskbar-diag") { TaskbarDiag.Run(args); return; }              // 2.2.4: the transparent-taskbar component: folder, expected vs actual hashes, signature, running copies
             if (args.Length > 0 && args[0] == "--dock-diag") { DockDiag.Run(args); return; }                // 2.2.0: list the windows the Dock sees and which are elevated
             if (args.Length > 0 && args[0] == "--weather-diag") { WeatherDiag.Run(args); return; }          // 2.1.1: diagnose location and weather sources
@@ -240,6 +252,7 @@ namespace ClearDesk
                     Services.Tick();
             };
             refresh.Start();
+            try { DesktopKeeper.Start(); } catch (Exception e) { Log(e); }      // 2.2.5: widgets stay on 显示桌面 / Win+D
             MemoryTrim.Start();
             if (!Preview)
             {
@@ -629,9 +642,13 @@ namespace ClearDesk
         }
 
         static Action balloonClick;
+        internal static int Balloons; internal static string LastBalloon;   // test counters
+        internal static readonly bool QuietRun = Environment.GetCommandLineArgs().Skip(1).Any(a => a.EndsWith("-test", StringComparison.OrdinalIgnoreCase) || a == "--preview" || a == "--popup-benchmark");
         internal static void Balloon(string title, string text) { Balloon(title, text, null); }
         internal static void Balloon(string title, string text, Action onClick)
         {
+            Balloons++; LastBalloon = title;
+            if (QuietRun) return;      // 2.2.5: test / preview runs never show tray notices on the user's desktop
             try { balloonClick = onClick; if (tray != null) tray.ShowBalloonTip(6000, title, text, Forms.ToolTipIcon.Info); } catch { }
         }
 

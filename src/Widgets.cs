@@ -741,7 +741,9 @@ namespace ClearDesk
         // longer raises it above other apps or other widgets; unlocked widgets can still come forward while
         // being arranged. Dock / 启动台 and topmost widgets are not affected; 定位 (Flash) may raise briefly.
         bool flashing;
-        internal bool PinnedToBottom { get { return State.Locked && !Topmost && !flashing && !(this is DockWindow) && !(this is LaunchpadWindow); } }
+        internal bool PinnedToBottom { get { return State.Locked && !Topmost && !flashing && !DesktopLayer && !(this is DockWindow) && !(this is LaunchpadWindow); } }
+        /// <summary>2.2.5: lifted above the shown desktop by DesktopKeeper (Win+D / 显示桌面); the bottom pin is suspended until another window becomes the foreground.</summary>
+        internal bool DesktopLayer;
         protected virtual bool NoActivateWhenLocked { get { return !(this is NoteWindow) && !(this is OrganizerWindow); } }
         IntPtr PinHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {

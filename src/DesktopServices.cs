@@ -114,6 +114,7 @@ namespace ClearDesk
                 restore.TaskbarProcessId = 0;
                 if (guardian != null) { try { WriteRecovery(); } catch (Exception e) { Program.Log(e); } }
                 taskbarActive = false;
+                ReleaseTaskbarRole();
             }
         }
 
@@ -129,21 +130,63 @@ namespace ClearDesk
         internal bool TaskbarGivenUp { get { return !taskbarActive && Program.S.Taskbar && taskbarNext == DateTime.MaxValue && taskbarTries > 0; } }
         internal TaskbarService TaskbarComponentService { get { return taskbar; } }
 
+        /// <summary>2.2.5: a component file that cannot be read (in use, being scanned — typical right after logon) is retried after these delays (about one minute in total),
+        /// silently. Only then the per-user copy is tried, and only if that fails too the user is told.</summary>
+        internal static int[] BusyBackoffSeconds = { 1, 2, 4, 8, 15, 30 };
+        int busyTries;
+        internal int BusyTries { get { return busyTries; } }
+
         internal bool StartTaskbar(bool first)
         {
             try
             {
+                // 2.2.5: only one ClearDesk per session manages TranslucentTB (another copy / version running at the same time would fight over the same files)
+                if (!OwnTaskbarRole())
+                {
+                    taskbarActive = false; LastTaskbarCode = null; taskbarNext = DateTime.Now.AddSeconds(30);
+                    if (!otherManagerLogged) { otherManagerLogged = true; Program.LogText("透明任务栏组件由另一个 ClearDesk 管理，本实例不启动也不提示。"); }
+                    return false;
+                }
                 EnsureRecovery();
                 if (taskbar.TryStart())
                 {
-                    restore.TaskbarProcessId = taskbar.ProcessId;
-                    restore.TaskbarPath = taskbar.Exe;
-                    WriteRecovery();
-                    taskbarActive = true; taskbarNext = DateTime.MaxValue; taskbarNotice = null; taskbarTries = 0;
-                    if (taskbar.Repaired != null) Program.LogText("透明任务栏组件：" + taskbar.Repaired);
-                    if (taskbar.Code == "TB-09") Program.LogText("透明任务栏组件 [TB-09]：按设置使用了未通过哈希校验的 TranslucentTB（版本相同且签名有效）。");
+                    Started(busyTries > 0 ? "第 " + busyTries + " 次重试后校验通过并启动" : null);
                     return true;
                 }
+                if (taskbar.Busy)
+                {
+                    string file = Path.Combine(taskbar.Dir, taskbar.BusyFile ?? "TranslucentTB.exe");
+                    if (busyTries == 0) TaskbarTimeline.Begin("开始启动透明任务栏组件：" + file + " 读不了（被占用或正在被扫描）");
+                    string holders = Holders(file);
+                    if (HeldByClearDesk(file))
+                    {
+                        // held by another ClearDesk or by the TranslucentTB it started: that is normal, not a problem to report
+                        TaskbarTimeline.Add("文件由另一个 ClearDesk / 它启动的 TranslucentTB 使用" + holders + "；视为正常，不启动第二份、不提示");
+                        busyTries = 0; taskbarActive = false; LastTaskbarCode = null; taskbarNext = DateTime.Now.AddSeconds(30);
+                        return false;
+                    }
+                    if (busyTries < BusyBackoffSeconds.Length)
+                    {
+                        int wait = BusyBackoffSeconds[busyTries];
+                        busyTries++;
+                        TaskbarTimeline.Add("第 " + busyTries + " 次读取失败" + holders + "；" + wait + " 秒后重试（不提示）");
+                        taskbarActive = false; LastTaskbarCode = "TB-04";
+                        taskbarNext = DateTime.Now.AddSeconds(wait);
+                        return false;
+                    }
+                    TaskbarTimeline.Add("重试 " + busyTries + " 次后仍然读不了" + holders + "；改用备用目录 " + (taskbar.RunDirectory ?? TaskbarComponent.RunDir));
+                    if (taskbar.TryStartRunCopy())
+                    {
+                        Started("已改用备用目录启动");
+                        return true;
+                    }
+                    TaskbarTimeline.Add("备用目录也失败：" + taskbar.Failure);
+                    busyTries = 0;
+                    TaskbarFailed("TranslucentTB 组件文件一直被占用，读不出来（" + Path.GetFileName(file) + "）" + holders + "。这不是文件内容不一致，一般是杀毒软件正在扫描或另一个程序正在使用它。改用备用目录也没有成功：" + taskbar.Failure,
+                        true, "TB-04", taskbar.Diag);
+                    return false;
+                }
+                busyTries = 0;
                 TaskbarFailed(taskbar.Failure ?? "未知原因", taskbar.Retryable, taskbar.Code, taskbar.Diag);
             }
             catch (Exception e)
@@ -152,6 +195,56 @@ namespace ClearDesk
                 TaskbarFailed(e.Message, true, "TB-06", null);
             }
             return false;
+        }
+
+        void Started(string timeline)
+        {
+            restore.TaskbarProcessId = taskbar.ProcessId;
+            restore.TaskbarPath = taskbar.Exe;
+            WriteRecovery();
+            taskbarActive = true; taskbarNext = DateTime.MaxValue; taskbarNotice = null; taskbarTries = 0;
+            if (timeline != null) TaskbarTimeline.Add(timeline + "：" + taskbar.Exe);
+            busyTries = 0;
+            if (taskbar.Repaired != null) Program.LogText("透明任务栏组件：" + taskbar.Repaired);
+            if (taskbar.Code == "TB-09") Program.LogText("透明任务栏组件 [TB-09]：按设置使用了未通过哈希校验的 TranslucentTB（版本相同且签名有效）。");
+            if (timeline != null) Program.LogText("透明任务栏组件启动时间线：" + Environment.NewLine + TaskbarTimeline.Text);
+        }
+
+        // ---- single manager per session (named mutex; tests / preview use their own data folder, so their own name)
+        System.Threading.Mutex roleMutex; bool roleOwned, otherManagerLogged;
+        internal static string RoleName { get { return "Local\\ClearDesk.TaskbarManager." + (Program.Preview || Program.QuietRun ? ((uint)(Program.Data ?? "").ToLowerInvariant().GetHashCode()).ToString("x8") : "main"); } }
+        internal bool OwnTaskbarRole()
+        {
+            if (roleOwned) return true;
+            try
+            {
+                if (roleMutex == null) roleMutex = new System.Threading.Mutex(false, RoleName);
+                try { roleOwned = roleMutex.WaitOne(0); } catch (System.Threading.AbandonedMutexException) { roleOwned = true; }
+            }
+            catch (Exception e) { Program.Log(e); roleOwned = true; }
+            return roleOwned;
+        }
+        internal void ReleaseTaskbarRole() { try { if (roleOwned) roleMutex.ReleaseMutex(); } catch { } roleOwned = false; }
+        internal static Func<string, List<FileLockers.Holder>> HoldersOf = FileLockers.Of;
+        static bool HeldByClearDesk(string file)
+        {
+            try
+            {
+                int me = System.Diagnostics.Process.GetCurrentProcess().Id;
+                var h = HoldersOf(file);
+                return h.Count > 0 && h.All(x => x.Pid != me && (Path.GetFileName(x.Path).Equals("ClearDesk.exe", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(x.Path).Equals("TranslucentTB.exe", StringComparison.OrdinalIgnoreCase) || x.Name.StartsWith("ClearDesk", StringComparison.OrdinalIgnoreCase) || x.Name.StartsWith("TranslucentTB", StringComparison.OrdinalIgnoreCase)));
+            }
+            catch { return false; }
+        }
+
+        static string Holders(string file)
+        {
+            try
+            {
+                var h = FileLockers.Of(file);
+                return h.Count == 0 ? "（未查到占用它的进程；可能是系统或安全软件的驱动在扫描）" : "（占用者：" + string.Join("；", h.Select(x => x.ToString())) + "）";
+            }
+            catch { return ""; }
         }
 
         internal string LastTaskbarCode;
@@ -169,7 +262,20 @@ namespace ClearDesk
             if (taskbarNotice != why)
             {
                 taskbarNotice = why;
-                Program.Balloon("透明任务栏暂不可用" + (code != null ? " [" + code + "]" : ""), why + "\nClearDesk 其他功能不受影响，稍后会自动重试。点这里打开日志；托盘菜单里有“修复透明任务栏组件”。", Program.OpenLog);
+                Program.Balloon(BalloonTitle(code), why + "\nClearDesk 其他功能不受影响，稍后会自动重试。点这里打开日志；托盘菜单里有“修复透明任务栏组件”。", Program.OpenLog);
+            }
+        }
+
+        /// <summary>2.2.5: the notice says which kind of problem it is — a file in use is not a file with different content.</summary>
+        internal static string BalloonTitle(string code)
+        {
+            switch (code)
+            {
+                case "TB-04": return "透明任务栏暂不可用：组件文件被占用 [TB-04]";
+                case "TB-03": return "透明任务栏暂不可用：组件文件内容与出厂清单不一致 [TB-03]";
+                case "TB-02": return "透明任务栏暂不可用：组件文件缺失 [TB-02]";
+                case "TB-07": return "透明任务栏未启动：已有其他 TranslucentTB 在运行 [TB-07]";
+                default: return "透明任务栏暂不可用" + (code != null ? " [" + code + "]" : "");
             }
         }
 
@@ -217,7 +323,7 @@ namespace ClearDesk
                 string how = null; bool wrote = false;
                 if (pack != null && pack.SelfCheck())
                 {
-                    try { TaskbarComponent.ExtractMissingOrWrong(pack, taskbar.Dir); wrote = true; how = "已从 ClearDesk 内置的出厂副本重新释放组件到安装文件夹。"; }
+                    try { TaskbarComponent.ExtractMissingOrWrong(pack, taskbar.Dir); wrote = true; how = "已从 出厂副本（taskbar-factory.zip）重新释放组件到安装文件夹。"; }
                     catch (Exception e) { how = "写入安装文件夹失败（" + e.Message + "），改用每用户副本。"; }
                 }
                 else if (!TaskbarComponent.Repair(taskbar.Dir, cache, pack, out how)) { }

@@ -31,6 +31,8 @@ namespace ClearDesk
             new KeyValuePair<string, string>("launcher", "快捷启动"),
             new KeyValuePair<string, string>("album", "图片相册"),
             new KeyValuePair<string, string>("sunair", "日出日落 / 空气质量"),
+            new KeyValuePair<string, string>("folder", "文件夹映射"),
+            new KeyValuePair<string, string>("battery", "设备电量"),
         };
 
         public static bool IsKnown(string kind)

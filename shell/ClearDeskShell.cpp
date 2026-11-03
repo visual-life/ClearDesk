@@ -35,6 +35,8 @@ static const Kind kKinds[] = {
     { L"launcher", L"\u5feb\u6377\u542f\u52a8" },
     { L"album", L"\u56fe\u7247\u76f8\u518c" },
     { L"sunair", L"\u65e5\u51fa\u65e5\u843d / \u7a7a\u6c14\u8d28\u91cf" },
+    { L"folder", L"\u6587\u4ef6\u5939\u6620\u5c04" },
+    { L"battery", L"\u8bbe\u5907\u7535\u91cf" },
 };
 static const int kCount = sizeof(kKinds) / sizeof(kKinds[0]);
 
