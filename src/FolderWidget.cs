@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -84,6 +84,16 @@ namespace ClearDesk
             return new ListSize { Icon = Math.Round(icon), Font = Math.Round(font * 2) / 2, Row = row };
         }
 
+        /// <summary>Title / header buttons scale: from the user window size only (screen px).</summary>
+        internal static double HeaderScale(double winW, double winH) { return Math.Round(Math.Max(.8, Math.Min(1.7, Math.Min(winW / 220, winH / 420))), 2); }
+        /// <summary>Keeps the previous size when the new one differs by one step and the list height moved less than 3 px since that size was chosen (no flicker at a threshold).</summary>
+        internal static ListSize Hysteresis(ListSize prev, ListSize next, double prevH, double h)
+        {
+            if (prev.Row == 0 || prevH < 0) return next;
+            if (Math.Abs(next.Icon - prev.Icon) <= 1 && Math.Abs(h - prevH) < 3) return prev;
+            return next;
+        }
+
         internal const double TileIconMax = 96;
         /// <summary>Icon view: the biggest icon (base .. 96) whose tile grid still fits the visible area; otherwise the base size and scrolling.</summary>
         internal static double TileMetrics(double width, double height, int count, double baseIcon)
@@ -142,7 +152,7 @@ namespace ClearDesk
             var root = new Grid(); root.Children.Add(scroller); root.Children.Add(emptyPanel);
             var host = new DockPanel(); host.Children.Add(note); host.Children.Add(root);
             Body.Children.Add(host);
-            scroller.SizeChanged += delegate { QueueMetrics(); };      // live while resizing
+            scroller.SizeChanged += delegate { QueueMetrics(); };      // window size settles; metrics read only the user size so this cannot loop
             AddMenuItem("视图：列表 / 图标", delegate { SetView(IsList ? "icons" : "list"); });
             AddMenuItem("刷新", Refresh);
             AddMenuItem("图标大小：大 / 中 / 小", delegate { data.IconSize = data.IconSize >= 56 ? 32 : data.IconSize >= 44 ? 64 : 44; Save(); Refresh(); });
@@ -164,30 +174,47 @@ namespace ClearDesk
         internal FolderLogic.ListSize LastList;      // screen sizes last applied (tests / diagnostics)
         internal double LastTileIcon, LastHeaderScale; double appliedHeader = 1;
 
-        /// <summary>2.2.7: recomputes row / icon / text sizes from the visible area (width and height) and the item count. Called on every size change.</summary>
+        /// <summary>2.2.8: recomputes row / icon / text sizes. Inputs are ONLY the size the user gave the widget (State size → window size) and the item count;
+        /// nothing measured from the list itself (viewport, scrollbar, header height after scaling) is read back, so the result cannot feed into itself.
+        /// The widget's Width / Height / MinHeight are never written here.</summary>
         internal void ApplyMetrics()
         {
+            MetricsRuns++;
             double s = ContentScale; if (s <= 0 || double.IsNaN(s)) s = 1;
-            double vw = scroller.ViewportWidth > 0 ? scroller.ViewportWidth : scroller.ActualWidth, vh = scroller.ViewportHeight > 0 ? scroller.ViewportHeight : scroller.ActualHeight;
-            if (vw <= 0 || vh <= 0) return;
-            double W = vw * s, H = vh * s;          // screen pixels
-            double headerScreen;
+            double winW = UserW, winH = UserH;                  // screen px, user-set
+            if (winW <= 0 || winH <= 0 || Header == null) return;
+            // fixed chrome (padding, note, margins) in content units: invariant of every metric below
+            double headNat = Header.ActualHeight;               // untransformed height, the LayoutTransform does not change it
+            if (headNat <= 0 || scroller.ActualHeight <= 0) return;
+            if (chromeH < 0 || Math.Abs(lastS - s) > .0001 || note.IsVisible != lastNote)
+            {
+                double win = ActualHeight / s, winWc = ActualWidth / s;
+                chromeH = Math.Max(0, win - scroller.ActualHeight - headNat * appliedHeader);
+                chromeW = Math.Max(0, winWc - scroller.ActualWidth);
+                lastS = s; lastNote = note.IsVisible;
+            }
+            // header scale depends on the window size only
+            double hs = FolderLogic.HeaderScale(winW, winH);
+            double k = Math.Round(hs / s, 2);
+            double W = Math.Max(1, winW - chromeW * s), H = Math.Max(1, winH - (chromeH + headNat * k) * s) - 4;    // screen px of the list area, 4px safety
             if (IsList)
             {
-                var m = FolderLogic.ListMetrics(W, H, parts.Count); LastList = m;
-                double rowW = Math.Max(60, vw - 2);
+                var m = FolderLogic.ListMetrics(W, H, parts.Count);
+                m = FolderLogic.Hysteresis(LastList, m, lastInH, H); if (m.Icon != LastList.Icon || LastList.Row == 0) lastInH = H;
+                LastList = m;
                 foreach (var p in parts)
                 {
                     p.Img.Width = p.Img.Height = m.Icon / s;
                     p.Img.Margin = new Thickness(6 / s * Math.Max(1, m.Icon / 16), 0, 8 / s * Math.Max(1, m.Icon / 16), 0);
                     p.Name.FontSize = m.Font / s;
-                    p.Tile.Height = m.Row / s; p.Tile.Width = rowW;
+                    p.Tile.Height = m.Row / s; p.Tile.Width = double.NaN; p.Tile.HorizontalAlignment = HorizontalAlignment.Stretch;
                 }
-                headerScreen = m.Font / FolderLogic.ListFontMin;
             }
             else
             {
-                double icon = FolderLogic.TileMetrics(W, H, parts.Count, data.IconSize); LastTileIcon = icon;
+                double icon = FolderLogic.TileMetrics(W, H, parts.Count, data.IconSize);
+                if (LastTileIcon > 0 && Math.Abs(icon - LastTileIcon) <= 2 && Math.Abs(H - lastInH) < 6) icon = LastTileIcon; else lastInH = H;
+                LastTileIcon = icon;
                 double font = Math.Max(11.5, Math.Min(18, 11.5 * icon / 44));
                 foreach (var p in parts)
                 {
@@ -195,27 +222,30 @@ namespace ClearDesk
                     p.Name.FontSize = font / s; p.Name.Width = (icon + 34) / s; p.Name.MaxHeight = font * 2.8 / s;
                     p.Tile.Width = (icon + 40) / s;
                 }
-                headerScreen = font / 11.5;
             }
-            // title and header buttons follow the content, but never wider than the widget allows
-            double hs = Math.Max(.8, Math.Min(Math.Min(1.7, headerScreen), W / 180));
-            double k = Math.Round(hs / s, 2);
-            if (Math.Abs(k - appliedHeader) >= .03 && Header != null)        // small steps ignored: the header height feeds back into the list height
+            if (Math.Abs(k - appliedHeader) >= .01)
             {
                 appliedHeader = k;
                 Header.LayoutTransform = Math.Abs(k - 1) < .01 ? null : new ScaleTransform(k, k);
             }
             LastHeaderScale = appliedHeader * s;
         }
+        double chromeH = -1, chromeW, lastS = -1, lastInH = -1; bool lastNote;
+        internal int MetricsRuns;
+        double UserW { get { return (State.CustomW > 0 ? State.CustomW : DefaultWidth); } }
+        double UserH { get { return (State.CustomH > 0 ? State.CustomH : DefaultHeight); } }
 
-        bool metricsQueued;
-        /// <summary>After the next layout pass (the content scale and the list area are final then); several triggers in a row cost one recalculation.</summary>
+        bool metricsQueued; DateTime lastMetrics;
+        /// <summary>Coalesced at low priority and at most once per frame (16 ms) while dragging.</summary>
         void QueueMetrics()
         {
             if (metricsQueued) return; metricsQueued = true;
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(delegate { metricsQueued = false; ApplyMetrics(); }));
+            double wait = 16 - (DateTime.UtcNow - lastMetrics).TotalMilliseconds;
+            Action run = delegate { metricsQueued = false; lastMetrics = DateTime.UtcNow; ApplyMetrics(); };
+            if (wait <= 0) Dispatcher.BeginInvoke(DispatcherPriority.Background, run);
+            else { var t = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(wait) }; t.Tick += delegate { t.Stop(); run(); }; t.Start(); }
         }
-        protected override void OnResponsive(double extraW, double extraH) { base.OnResponsive(extraW, extraH); QueueMetrics(); }     // widget resized / content scale changed
+        protected override void OnResponsive(double extraW, double extraH) { base.OnResponsive(extraW, extraH); QueueMetrics(); }     // user size changed
 
         internal bool IsList { get { return data.View == "list"; } }
         internal void SetView(string view) { data.View = view == "icons" ? "icons" : "list"; Save(); Refresh(); }
