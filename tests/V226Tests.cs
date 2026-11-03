@@ -15,7 +15,7 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version == "2.2.6", "2.2.6 version string");
+            check(SettingsWindow.Version.StartsWith("2.2."), "2.2.6 version string");
             check(FolderWindow.RowIcon >= 16 && FolderWindow.RowIcon <= 20, "2.2.6 folder list: row icon is 16-20 px (" + FolderWindow.RowIcon + ")");
         }
 
@@ -41,15 +41,15 @@ namespace ClearDesk
                 var names = rows.Select(r => ((FolderEntry)r.Tag).Name).ToList();
                 check(rows.Count == 4 && names[0] == "Alpha folder" && names[1] == "zeta folder", "2.2.6 folder list: one row per item, folders first (" + string.Join(", ", names) + ")");
                 double vw = w1.Scroller.ViewportWidth;
-                check(rows.All(r => Math.Abs(r.ActualHeight - FolderWindow.RowHeight) < .5 && Math.Abs(r.ActualWidth - (vw - 2)) < 3), "2.2.6 folder list: rows are full width and of equal height (" + rows[0].ActualWidth + " / " + vw + ")");
+                check(rows.All(r => Math.Abs(r.ActualHeight - rows[0].ActualHeight) < .5 && Math.Abs(r.ActualWidth - (vw - 2)) < 3), "2.2.6 folder list: rows are full width and of equal height (" + rows[0].ActualWidth + " / " + vw + ")");
                 double y0 = rows[0].TranslatePoint(new Point(0, 0), w1.Tiles).Y, y1 = rows[1].TranslatePoint(new Point(0, 0), w1.Tiles).Y;
                 check(y1 > y0 && Math.Abs(rows[0].TranslatePoint(new Point(0, 0), w1.Tiles).X - rows[1].TranslatePoint(new Point(0, 0), w1.Tiles).X) < .5, "2.2.6 folder list: rows stack vertically");
                 var img = ((DockPanel)rows[0].Child).Children.OfType<Image>().First();
-                check(Math.Abs(img.Width - FolderWindow.RowIcon) < .1, "2.2.6 folder list: small icon per row");
+                check(img.Width * w1.ContentScale >= 15.5 && img.Width * w1.ContentScale <= 48.5, "2.2.6 folder list: small icon per row (" + (img.Width * w1.ContentScale).ToString("0.#") + " px)");
                 var longRow = rows.First(r => ((FolderEntry)r.Tag).Name == longName);
                 var tb = ((DockPanel)longRow.Child).Children.OfType<TextBlock>().First();
                 tb.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-                check(tb.TextTrimming == TextTrimming.CharacterEllipsis && tb.TextWrapping == TextWrapping.NoWrap && tb.DesiredSize.Width > tb.ActualWidth + 20 && longRow.ActualHeight < FolderWindow.RowHeight + .5, "2.2.6 folder list: a long name stays on one line and ends with an ellipsis (" + tb.ActualWidth + " of " + tb.DesiredSize.Width + ")");
+                check(tb.TextTrimming == TextTrimming.CharacterEllipsis && tb.TextWrapping == TextWrapping.NoWrap && tb.DesiredSize.Width > tb.ActualWidth + 20 && Math.Abs(longRow.ActualHeight - rows[0].ActualHeight) < .5, "2.2.6 folder list: a long name stays on one line and ends with an ellipsis (" + tb.ActualWidth + " of " + tb.DesiredSize.Width + ")");
 
                 // hover
                 rows[2].RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = UIElement.MouseEnterEvent });

@@ -61,6 +61,43 @@ namespace ClearDesk
         }
 
         internal static int Columns(double width, int iconSize) { return Math.Max(1, (int)(width / (iconSize + 40))); }
+
+        // ---- 2.2.7 adaptive sizes. All values are SCREEN pixels (DIP) of the visible list area; width AND height count.
+        internal const double ListIconMin = 16, ListIconMax = 48, ListFontMin = 12, ListFontMax = 22, ListRowMin = 26;
+        internal struct ListSize { public double Icon, Font, Row; public override string ToString() { return "icon " + Icon.ToString("0.#") + " / font " + Font.ToString("0.#") + " / row " + Row.ToString("0.#"); } }
+
+        /// <summary>
+        /// List view: few items in a tall widget -> bigger rows so the list fills the height; never above 48 px icons / 22 px text;
+        /// a narrow widget limits it (icon at most width / 6, so names keep room); many items -> the base size (16 / 12 / 26) and scrolling.
+        /// </summary>
+        internal static ListSize ListMetrics(double width, double height, int count)
+        {
+            double icon = ListIconMin;
+            if (count > 0 && width > 0 && height > 0)
+            {
+                double byHeight = height / count / 1.45;      // a row is about 1.45 x the icon
+                double byWidth = width / 6;
+                icon = Math.Max(ListIconMin, Math.Min(ListIconMax, Math.Min(byHeight, byWidth)));
+            }
+            double font = ListFontMin + (icon - ListIconMin) * (ListFontMax - ListFontMin) / (ListIconMax - ListIconMin);
+            double row = Math.Max(ListRowMin, Math.Round(icon * 1.45));
+            return new ListSize { Icon = Math.Round(icon), Font = Math.Round(font * 2) / 2, Row = row };
+        }
+
+        internal const double TileIconMax = 96;
+        /// <summary>Icon view: the biggest icon (base .. 96) whose tile grid still fits the visible area; otherwise the base size and scrolling.</summary>
+        internal static double TileMetrics(double width, double height, int count, double baseIcon)
+        {
+            baseIcon = Math.Max(24, Math.Min(TileIconMax, baseIcon));
+            if (count <= 0 || width <= 0 || height <= 0) return baseIcon;
+            for (double icon = TileIconMax; icon > baseIcon; icon -= 2)
+            {
+                int cols = Math.Max(1, (int)(width / (icon + 42)));
+                int rows = (count + cols - 1) / cols;
+                if (rows * (icon + icon * .35 + 34) <= height) return icon;
+            }
+            return baseIcon;
+        }
     }
 
     /// <summary>
@@ -105,7 +142,7 @@ namespace ClearDesk
             var root = new Grid(); root.Children.Add(scroller); root.Children.Add(emptyPanel);
             var host = new DockPanel(); host.Children.Add(note); host.Children.Add(root);
             Body.Children.Add(host);
-            scroller.SizeChanged += delegate { if (IsList) { double w = RowWidth(); foreach (FrameworkElement c in grid.Children) c.Width = w; } };
+            scroller.SizeChanged += delegate { QueueMetrics(); };      // live while resizing
             AddMenuItem("视图：列表 / 图标", delegate { SetView(IsList ? "icons" : "list"); });
             AddMenuItem("刷新", Refresh);
             AddMenuItem("图标大小：大 / 中 / 小", delegate { data.IconSize = data.IconSize >= 56 ? 32 : data.IconSize >= 44 ? 64 : 44; Save(); Refresh(); });
@@ -121,6 +158,64 @@ namespace ClearDesk
         }
 
         void Save() { ToolStore.Save(State.Id, data); }
+
+        sealed class Part { public Border Tile; public Image Img; public TextBlock Name; }
+        readonly List<Part> parts = new List<Part>();
+        internal FolderLogic.ListSize LastList;      // screen sizes last applied (tests / diagnostics)
+        internal double LastTileIcon, LastHeaderScale; double appliedHeader = 1;
+
+        /// <summary>2.2.7: recomputes row / icon / text sizes from the visible area (width and height) and the item count. Called on every size change.</summary>
+        internal void ApplyMetrics()
+        {
+            double s = ContentScale; if (s <= 0 || double.IsNaN(s)) s = 1;
+            double vw = scroller.ViewportWidth > 0 ? scroller.ViewportWidth : scroller.ActualWidth, vh = scroller.ViewportHeight > 0 ? scroller.ViewportHeight : scroller.ActualHeight;
+            if (vw <= 0 || vh <= 0) return;
+            double W = vw * s, H = vh * s;          // screen pixels
+            double headerScreen;
+            if (IsList)
+            {
+                var m = FolderLogic.ListMetrics(W, H, parts.Count); LastList = m;
+                double rowW = Math.Max(60, vw - 2);
+                foreach (var p in parts)
+                {
+                    p.Img.Width = p.Img.Height = m.Icon / s;
+                    p.Img.Margin = new Thickness(6 / s * Math.Max(1, m.Icon / 16), 0, 8 / s * Math.Max(1, m.Icon / 16), 0);
+                    p.Name.FontSize = m.Font / s;
+                    p.Tile.Height = m.Row / s; p.Tile.Width = rowW;
+                }
+                headerScreen = m.Font / FolderLogic.ListFontMin;
+            }
+            else
+            {
+                double icon = FolderLogic.TileMetrics(W, H, parts.Count, data.IconSize); LastTileIcon = icon;
+                double font = Math.Max(11.5, Math.Min(18, 11.5 * icon / 44));
+                foreach (var p in parts)
+                {
+                    p.Img.Width = p.Img.Height = icon / s;
+                    p.Name.FontSize = font / s; p.Name.Width = (icon + 34) / s; p.Name.MaxHeight = font * 2.8 / s;
+                    p.Tile.Width = (icon + 40) / s;
+                }
+                headerScreen = font / 11.5;
+            }
+            // title and header buttons follow the content, but never wider than the widget allows
+            double hs = Math.Max(.8, Math.Min(Math.Min(1.7, headerScreen), W / 180));
+            double k = Math.Round(hs / s, 2);
+            if (Math.Abs(k - appliedHeader) >= .03 && Header != null)        // small steps ignored: the header height feeds back into the list height
+            {
+                appliedHeader = k;
+                Header.LayoutTransform = Math.Abs(k - 1) < .01 ? null : new ScaleTransform(k, k);
+            }
+            LastHeaderScale = appliedHeader * s;
+        }
+
+        bool metricsQueued;
+        /// <summary>After the next layout pass (the content scale and the list area are final then); several triggers in a row cost one recalculation.</summary>
+        void QueueMetrics()
+        {
+            if (metricsQueued) return; metricsQueued = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(delegate { metricsQueued = false; ApplyMetrics(); }));
+        }
+        protected override void OnResponsive(double extraW, double extraH) { base.OnResponsive(extraW, extraH); QueueMetrics(); }     // widget resized / content scale changed
 
         internal bool IsList { get { return data.View == "list"; } }
         internal void SetView(string view) { data.View = view == "icons" ? "icons" : "list"; Save(); Refresh(); }
@@ -166,7 +261,7 @@ namespace ClearDesk
         internal void Refresh()
         {
             Refreshes++;
-            grid.Children.Clear(); selected = null;
+            grid.Children.Clear(); parts.Clear(); selected = null;
             bool hasFolder = !string.IsNullOrEmpty(data.Path);
             title.Text = hasFolder ? FolderName(data.Path) : "文件夹映射";
             emptyPanel.Visibility = hasFolder ? Visibility.Collapsed : Visibility.Visible;
@@ -202,6 +297,7 @@ namespace ClearDesk
                     var stack = new StackPanel(); stack.Children.Add(img); stack.Children.Add(name);
                     tile = new Border { Child = stack, Width = size + 40, Padding = new Thickness(3, 6, 3, 5), Margin = new Thickness(1), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent, ToolTip = item.Name + "\n" + item.Path, Cursor = Cursors.Hand, Tag = item };
                 }
+                parts.Add(new Part { Tile = tile, Img = img, Name = (TextBlock)(list ? ((DockPanel)tile.Child).Children[1] : ((StackPanel)tile.Child).Children[1]) });
                 tile.MouseEnter += delegate { if (tile != selected) tile.Background = Hover; };
                 tile.MouseLeave += delegate { if (tile != selected) tile.Background = Brushes.Transparent; };
                 tile.MouseLeftButtonDown += (s, e) =>
@@ -218,6 +314,7 @@ namespace ClearDesk
                 tile.ContextMenu = menu;
                 grid.Children.Add(tile);
             }
+            ApplyMetrics();
             // icons are fetched in small batches at background priority, so a big folder does not freeze the desktop
             int at = 0;
             Action next = null;
