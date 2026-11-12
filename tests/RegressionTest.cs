@@ -167,6 +167,7 @@ namespace ClearDesk
                 dock.TestHover(.5);
                 await Task.Delay(350);
                 Check(dock.TestMaxScale > 1.1, "Dock magnification is active before visibility transition");
+                Check(dock.TestIconsSubPixel, "Dock magnified icons are laid out sub-pixel (no 1 px snapping jitter)");
                 foreign.WindowState = WindowState.Maximized;
                 await Task.Delay(250);
                 visibility.ApplyForeground(new WindowInteropHelper(foreign).Handle);

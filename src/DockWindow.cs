@@ -325,6 +325,13 @@ namespace ClearDesk
                 Margin = new Thickness(0),
                 Tag = entry
             };
+            // Hover magnification rewrites this button's width, height and position every frame. GlassWindow sets
+            // UseLayoutRounding, which snapped each of those to whole device pixels: a slow pointer move made a size flip
+            // between 73 and 74 px and later icons jumped by the accumulated rounding, so the row visibly vibrated.
+            // The icons are bitmaps that are rescaled on every frame anyway, so keep their layout sub-pixel (smooth), while
+            // the plate and the running dots keep the window's pixel snapping (crisp 1 px lines / dots).
+            b.UseLayoutRounding = false;
+            b.SnapsToDevicePixels = false;
             ToolTipService.SetInitialShowDelay(b, 550);
             ToolTipService.SetPlacement(b, PlacementMode.Top);
             if (entry == null)
@@ -619,6 +626,15 @@ namespace ClearDesk
             get
             {
                 return sizes.Count == 0 ? 1 : sizes.Max() / baseSize;
+            }
+        }
+
+        /// <summary>Hover magnification must not be pixel-rounded, see AddIcon.</summary>
+        internal bool TestIconsSubPixel
+        {
+            get
+            {
+                return buttons.Count > 0 && buttons.All(b => !b.UseLayoutRounding && !b.SnapsToDevicePixels);
             }
         }
 
