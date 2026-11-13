@@ -134,6 +134,7 @@ namespace ClearDesk
                     autoHide = new DockAutoHide(this);
                     autoHide.Start();
                 }
+                WatchGeometry();
             };
             IsVisibleChanged += delegate
             {
@@ -202,11 +203,36 @@ namespace ClearDesk
         internal void ApplyOffset()
         {
             if (WasClosed) return;
-            var wa = SystemParameters.WorkArea;
-            ShownTop = wa.Bottom - Height - Program.S.DockOffset;
+            var g = Geometry(); geometrySig = DockPlacement.Signature(g);
+            ShownTop = DockPlacement.Top(g, Height, Program.S.DockOffset);
             if (autoHide == null || !autoHide.Hidden) { BeginAnimation(TopProperty, null); Top = ShownTop; }
             if (autoHide != null) autoHide.Evaluate();
         }
+
+        // 2.3.2: the Dock rests on the physical bottom of the screen (taskbar hidden / on another edge) or on top of the visible bottom taskbar - never on a stale work area.
+        internal DockGeometry Geometry() { return DockPlacement.Provider(this); }
+        internal double HiddenTop { get { return DockPlacement.MonitorBottomDip(Geometry()) + 4; } }
+        string geometrySig = "";
+        DispatcherTimer geometryTimer;
+        void WatchGeometry()
+        {
+            if (geometryTimer != null) return;
+            geometryTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(400) };
+            geometryTimer.Tick += delegate
+            {
+                if (WasClosed) return;
+                if (DockPlacement.Signature(Geometry()) == geometrySig) return;
+                GeometryChanges++;
+                if (!rebuilding && !transitioning) Rebuild(); else ApplyOffset();      // Rebuild sizes the Dock to the work area and calls ApplyOffset's placement
+            };
+            geometryTimer.Start();
+            Closed += delegate { geometryTimer.Stop(); };
+        }
+        internal int GeometryChanges;
+        internal void TestCheckGeometry() { if (DockPlacement.Signature(Geometry()) != geometrySig) { GeometryChanges++; Rebuild(); } }
+        /// <summary>Bottom of the visible plate, physical pixels (what the user sees against the screen edge).</summary>
+        internal double TestPlateBottomPx { get { var g = Geometry(); return (Top + Canvas.GetTop(plate) + plate.Height) * (g.Scale > 0 ? g.Scale : 1); } }
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi) { base.OnDpiChanged(oldDpi, newDpi); if (IsLoaded) Dispatcher.BeginInvoke(new Action(delegate { if (!WasClosed) Rebuild(); }), DispatcherPriority.Background); }
 
         internal void RefreshAutoHide() { if (autoHide != null) autoHide.Evaluate(); }
 
@@ -282,7 +308,8 @@ namespace ClearDesk
                 entries = running.Entries(Program.S.Pins); builtSignature = Signature(entries); RebuildCount++;
                 pinnedCount = entries.Count(e => e.Pinned);
                 separatorBefore = entries.Any(e => !e.Pinned) ? pinnedCount + 1 : -1;
-                var wa = SystemParameters.WorkArea;
+                var geo = Geometry(); geometrySig = DockPlacement.Signature(geo);
+                var wa = DockPlacement.WorkDip(geo);
                 int count = entries.Count + 1;
                 double gap = separatorBefore >= 0 ? 18 : 0;
                 baseSize = Math.Min(Program.S.DockSize, Math.Max(16, (wa.Width - 180 - gap) / count - 9));
@@ -293,7 +320,7 @@ namespace ClearDesk
                 Height = animate ? Math.Max(previousHeight, targetHeight) : targetHeight;
                 State.Height = targetHeight;
                 Left = wa.Left + (wa.Width - Width) / 2;
-                ShownTop = wa.Bottom - Height - Program.S.DockOffset;
+                ShownTop = DockPlacement.Top(geo, Height, Program.S.DockOffset);
                 if (autoHide == null || !autoHide.Hidden) Top = ShownTop;
                 AddIcon(null);
                 foreach (var entry in entries)

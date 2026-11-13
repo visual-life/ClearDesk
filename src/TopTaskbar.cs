@@ -53,6 +53,8 @@ namespace ClearDesk
         static DateTime edgeSince = DateTime.MinValue, outsideSince = DateTime.MinValue, lastWork = DateTime.MinValue;
         static readonly Dictionary<uint, string> procNames = new Dictionary<uint, string>();
         public static bool Active { get { return hidden; } }
+        /// <summary>2.3.2: ClearDesk is hiding a tray on this edge right now (the Dock then rests on the physical screen bottom).</summary>
+        internal static bool HidesEdge(Edge e) { return hidden && edges.Values.Contains(e); }
         public static bool Revealed { get { return revealed; } }
 
         static IntPtr Dpi() { try { return SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch { return IntPtr.Zero; } }
@@ -105,7 +107,7 @@ namespace ClearDesk
         [DllImport("shell32.dll")] static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
         static DateTime autoHideAt = DateTime.MinValue; static bool autoHide;
         /// <summary>Windows' own "taskbar auto-hide" switch (ABM_GETSTATE / ABS_AUTOHIDE), asked at most twice a second.</summary>
-        static bool WindowsAutoHide()
+        internal static bool WindowsAutoHide()
         {
             if ((DateTime.UtcNow - autoHideAt).TotalMilliseconds < 500) return autoHide;
             try { var d = new APPBARDATA(); d.cbSize = (uint)Marshal.SizeOf(typeof(APPBARDATA)); autoHide = (((ulong)SHAppBarMessage(4, ref d)) & 1) != 0; } catch { autoHide = false; }
@@ -228,6 +230,7 @@ namespace ClearDesk
                     edges.Clear(); foreach (var t in top) edges[t] = EdgeOf(t);
                     foreach (var t in top) { if (!IsWindowVisible(t)) ShowWindow(t, SW_SHOWNA); Clip(t, 0); }
                     ClaimWork(top);
+                    Program.RefreshDockOffset();      // 2.3.2: the Dock follows the work area at once
                 }
 
                 POINT p; GetCursorPos(out p);

@@ -59,6 +59,9 @@ namespace ClearDesk
             return enabled && overlapped && !pointerEngaged;
         }
 
+        /// <summary>2.3.2: the summon zone is the last two pixel rows of the monitor (physical bottom, taskbar or not) over the Dock's width.</summary>
+        internal static bool InSummonZone(int x, int y, int left, int right, int monitorBottom) { return y >= monitorBottom - 2 && y < monitorBottom + 1 && x >= left && x <= right; }
+
         // The rect the Dock occupies when shown, in physical pixels.
         internal Native.RECT ShownRect()
         {
@@ -110,7 +113,7 @@ namespace ClearDesk
         DispatcherTimer showDelay; internal int DelayedShows;
         internal void Evaluate()
         {
-            if (disposed || dock.WasClosed) return;
+            if (disposed || dock.WasClosed || pointer == null) return;      // 2.3.2: not started (test hook / Rendering mode) = nothing to evaluate
             bool enabled = Program.S.DockAutoHide;
             Overlapped = enabled && FindOverlap();
             if (!enabled || !Overlapped) PeekedByPointer = false;
@@ -136,11 +139,11 @@ namespace ClearDesk
         {
             if (disposed || dock.WasClosed) return;
             var p = Forms.Cursor.Position;
-            var screen = Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(dock).Handle).Bounds;
+            int monitorBottom = dock.Geometry().Monitor.B;
             var area = ShownRect();
             if (Hidden)
             {
-                if (p.Y >= screen.Bottom - 2 && p.X >= area.L && p.X <= area.R)
+                if (InSummonZone(p.X, p.Y, area.L, area.R, monitorBottom))
                 {
                     PeekedByPointer = true; leftAt = DateTime.MaxValue; Apply(false);
                 }
@@ -160,7 +163,7 @@ namespace ClearDesk
         {
             if (hide == Hidden) return;
             Hidden = hide;
-            double target = hide ? SystemParameters.PrimaryScreenHeight + 4 : dock.ShownTop;
+            double target = hide ? dock.HiddenTop : dock.ShownTop;
             var a = new DoubleAnimation(target, TimeSpan.FromMilliseconds(hide ? 240 : 200)) { EasingFunction = new CubicEase { EasingMode = hide ? EasingMode.EaseIn : EasingMode.EaseOut } };
             if (!hide) a.Completed += delegate { if (!Hidden) { dock.BeginAnimation(Window.TopProperty, null); dock.Top = dock.ShownTop; } };
             if (Program.Rendering || !dock.IsVisible) { dock.BeginAnimation(Window.TopProperty, null); dock.Top = target; if (hide) dock.BeginAnimation(Window.TopProperty, new DoubleAnimation(target, TimeSpan.Zero)); return; }
