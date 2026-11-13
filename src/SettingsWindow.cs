@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.3.3";
+        internal const string Version = "2.3.4";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -222,7 +222,7 @@ namespace ClearDesk
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
             Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
             Toggle(g,"快捷控制","音量、WLAN、蓝牙开关与 Windows 设置快捷入口。",state.QuickControls,v=>state.QuickControls=v);
-            Toggle(g,"快捷控制里显示托盘图标","在快捷控制底部列出任务栏右下角的托盘图标（包括被收起的）。左键 = 应用的左键，右键 = 应用自己的菜单（如“退出”）；这样不用任务栏也能管理后台应用。",state.TrayArea,v => { state.TrayArea=v; Program.RefreshTray(); });
+            Toggle(g,"快捷控制里显示托盘图标入口","在快捷控制里加一个“托盘图标”入口，点进去是一页列表，列出任务栏右下角的托盘图标（包括被收起的）。左键 = 应用的左键，右键 = 应用自己的菜单（如“退出”），任务栏被隐藏时也不会弹出来；这样不用任务栏也能管理后台应用。",state.TrayArea,v => { state.TrayArea=v; Program.RefreshTray(); });
             Choice(g,"托盘图标范围","显示全部托盘图标，或只显示被收起的 / 只显示任务栏上可见的。",new[]{"全部","仅被收起的","仅任务栏上可见的"},state.TrayScope=="hidden"?1:state.TrayScope=="visible"?2:0,i => { state.TrayScope=i==1?"hidden":i==2?"visible":"all"; Program.RefreshTray(); });
             foreach (var tool in ToolWidgets.Kinds) { string kind = tool.Key; Toggle(g,tool.Value,ToolWidgets.Descriptions[kind],ToolWidgets.On(kind),v=>ToolWidgets.Set(kind,v)); }   // 2.2.0
             Toggle(g,"磁吸对齐","拖动组件时吸附屏幕边缘、其他组件的边缘与中线及等距间隔，并显示参考线；按住 Alt 临时关闭。",state.Magnet,v=>state.Magnet=v);

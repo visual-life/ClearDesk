@@ -27,7 +27,9 @@ namespace ClearDesk
         static readonly object gate = new object();
         static readonly Dictionary<string, byte[]> iconCache = new Dictionary<string, byte[]>();
         internal static string LastProblem;
-        internal static int OverflowOpens;
+        internal static int OverflowOpens, VisiblePasses, RevealFallbacks;
+        internal static string LastRightClickMethod;
+        static readonly HashSet<string> imageTried = new HashSet<string>();
 
         internal static string Clean(string name)
         {
@@ -54,8 +56,10 @@ namespace ClearDesk
             try
             {
                 var w = AutomationElement.RootElement.FindFirst(TreeScope.Children, new PropertyCondition(AutomationElement.ClassNameProperty, OverflowClass));
-                if (w != null && w.Current.IsOffscreen) return null;
-                return w;
+                if (w == null) return null;
+                int hwnd = w.Current.NativeWindowHandle;
+                if (hwnd != 0) return UiaCom.IsWindowVisible(new IntPtr(hwnd)) ? w : null;       // 2.3.4: an invisible (empty-region) flyout is still "open"
+                return w.Current.IsOffscreen ? null : w;
             }
             catch { return null; }
         }
@@ -82,7 +86,7 @@ namespace ClearDesk
         }
 
         /// <summary>Closes the overflow flyout if it is open (tests leave nothing open).</summary>
-        internal static void CloseFlyout() { lock (gate) { var t = Tray(); if (t != null) CloseOverflow(t); } }
+        internal static void CloseFlyout() { lock (gate) { var t = Tray(); if (t != null) CloseOverflow(t); } UiaCom.ResetFlyoutNow(); }
 
         internal static bool Available { get { return Tray() != null; } }
 
@@ -117,45 +121,70 @@ namespace ClearDesk
             }
         }
 
-        /// <summary>The hidden icons: opens the overflow flyout, reads (and copies the images), and closes it again (a moment's flicker, and it takes the focus).</summary>
+        /// <summary>The hidden icons. 2.3.4: the flyout is opened with an empty window region, so nothing appears on screen (it still takes the focus for a moment).
+        /// Icon pictures can only be copied from pixels that are really shown, so an icon that has no picture yet makes ONE visible pass (a short flash, once per icon); after that the picture is remembered.</summary>
         internal static List<TrayItem> ReadOverflow(bool capture)
         {
             lock (gate)
             {
                 var tray = Tray(); if (tray == null) return new List<TrayItem>();
-                bool ours; var w = OpenOverflow(tray, out ours);
+                List<TrayItem> list;
+                bool ours; var w = OpenOverflow(tray, out ours, true);
                 if (w == null) return new List<TrayItem>();
-                try { return Read(w, true, capture); }
+                try { list = Read(w, true, false); }
                 finally { if (ours) CloseOverflow(tray); }
+                if (capture)
+                {
+                    var missing = list.Where(i => i.Png == null && imageTried.Add(IconKey(i.Name))).ToList();
+                    if (missing.Count > 0)
+                    {
+                        VisiblePasses++;
+                        bool ours2; var w2 = OpenOverflow(tray, out ours2, false);
+                        if (w2 != null)
+                        {
+                            try { list = Read(w2, true, true); }
+                            finally { if (ours2) CloseOverflow(tray); }
+                        }
+                    }
+                }
+                return list;
             }
         }
 
-        static AutomationElement OpenOverflow(AutomationElement tray, out bool openedByUs)
+        static AutomationElement OpenOverflow(AutomationElement tray, out bool openedByUs, bool invisible)
         {
             openedByUs = false;
             var w = OverflowWindow(); if (w != null) return w;
             var chevron = Chevron(tray);
             if (chevron == null) { LastProblem = "找不到“显示隐藏的图标”按钮"; return null; }
-            try { ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); }
-            catch (Exception e) { LastProblem = "无法展开隐藏的图标：" + e.Message; return null; }
-            openedByUs = true; OverflowOpens++;
-            for (int i = 0; i < 70; i++)
+            UiaCom.OverflowHider hider = invisible ? new UiaCom.OverflowHider() : null;
+            try
             {
-                Thread.Sleep(50);
-                w = OverflowWindow();
-                if (w != null && Buttons(w).Any(IsAppIcon)) { Thread.Sleep(120); return w; }
+                try { ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); }
+                catch (Exception e) { LastProblem = "无法展开隐藏的图标：" + e.Message; return null; }
+                openedByUs = true; OverflowOpens++;
+                for (int i = 0; i < 70; i++)
+                {
+                    Thread.Sleep(50);
+                    w = OverflowWindow();
+                    if (w != null && Buttons(w).Any(IsAppIcon)) { Thread.Sleep(invisible ? 40 : 120); return w; }
+                }
+                LastProblem = "隐藏的图标面板没有出现";
+                if (w != null || OverflowWindow() != null) CloseOverflow(tray);
+                return null;
             }
-            LastProblem = "隐藏的图标面板没有出现";
-            if (w != null || OverflowWindow() != null) CloseOverflow(tray);
-            return null;
+            finally { if (hider != null) hider.Dispose(); }
         }
 
         static void CloseOverflow(AutomationElement tray)
         {
-            if (OverflowWindow() == null) return;
-            var chevron = Chevron(tray);
-            try { if (chevron != null) ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); } catch { }
-            for (int i = 0; i < 30 && OverflowWindow() != null; i++) Thread.Sleep(50);
+            if (OverflowWindow() != null)
+            {
+                var chevron = Chevron(tray);
+                try { if (chevron != null) ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); } catch { }
+                for (int i = 0; i < 30 && OverflowWindow() != null; i++) Thread.Sleep(50);
+            }
+            UiaCom.RestoreWhenClosed(null);          // 2.3.4: give the flyout window its normal shape back once it is closed
         }
 
         static AutomationElement Find(AutomationElement root, string name)
@@ -252,7 +281,9 @@ namespace ClearDesk
         [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
         [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
 
-        /// <summary>mode 0 = left click, 1 = right click, 2 = double click. Returns null when it worked, otherwise what went wrong (in Chinese, shown to the user).</summary>
+        /// <summary>mode 0 = left click, 1 = right click, 2 = double click. Returns null when it worked, otherwise what went wrong (in Chinese, shown to the user).
+        /// 2.3.4: the right click is handed to the program by the shell itself (UI Automation ShowContextMenu): no mouse, and a taskbar that ClearDesk has hidden stays hidden.
+        /// Only when the shell refuses is the old way used (a real click on the icon, which brings the taskbar out for a moment).</summary>
         internal static string Click(TrayItem item, int mode)
         {
             lock (gate)
@@ -262,7 +293,7 @@ namespace ClearDesk
                 if (!item.Overflow) el = Find(tray, item.Name);
                 if (el == null)
                 {
-                    var w = OpenOverflow(tray, out ours);
+                    var w = OpenOverflow(tray, out ours, true);
                     if (w != null) { el = Find(w, item.Name); inFlyout = el != null; }
                     if (el == null && item.Overflow) el = Find(tray, item.Name);      // it was promoted onto the taskbar meanwhile
                 }
@@ -270,7 +301,18 @@ namespace ClearDesk
                 string error = null;
                 try
                 {
-                    if (mode == 1) error = RightClick(el, inFlyout);
+                    if (mode == 1)
+                    {
+                        IntPtr root = inFlyout ? UiaCom.OverflowWindowHandle() : UiaCom.TrayWindow();
+                        error = UiaCom.ShowContextMenu(root, Clean(item.Name));
+                        if (error == null) LastRightClickMethod = "UI Automation ShowContextMenu";
+                        else
+                        {
+                            RevealFallbacks++; LastRightClickMethod = "mouse click (fallback: " + error + ")";
+                            if (inFlyout) { UiaCom.MakeVisible(UiaCom.OverflowWindowHandle()); Thread.Sleep(150); }
+                            error = RightClick(el, inFlyout);
+                        }
+                    }
                     else
                     {
                         var invoke = (InvokePattern)el.GetCurrentPattern(InvokePattern.Pattern);
@@ -279,7 +321,11 @@ namespace ClearDesk
                     }
                 }
                 catch (Exception e) { error = "操作失败：" + e.Message; }
-                if (mode != 1 && ours) { Thread.Sleep(350); CloseOverflow(tray); }
+                if (ours)
+                {
+                    if (mode != 1) { Thread.Sleep(350); CloseOverflow(tray); }
+                    else UiaCom.RestoreWhenClosed(delegate { var t = Tray(); if (t != null) CloseOverflow(t); });
+                }
                 return error;
             }
         }
