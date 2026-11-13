@@ -15,7 +15,7 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version.StartsWith("2.2."), "2.2.6 version string");
+            check(SettingsWindow.Version.StartsWith("2."), "2.2.6 version string");
             check(FolderWindow.RowIcon >= 16 && FolderWindow.RowIcon <= 20, "2.2.6 folder list: row icon is 16-20 px (" + FolderWindow.RowIcon + ")");
         }
 

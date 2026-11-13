@@ -187,6 +187,7 @@ namespace ClearDesk
         }
         internal bool Compact { get { return !data.Classic; } }
         internal const double CompactMinW = 120, CompactMinH = 96;
+        protected override double MinContentScale { get { return .6; } }      // 2.3.1: as before (the metrics of 2.2.8 / 2.2.9 were tuned with it)
         protected override double MinCustomW { get { return Compact ? CompactMinW : base.MinCustomW; } }
         protected override double MinCustomH { get { return Compact ? CompactMinH : base.MinCustomH; } }
         internal TextBlock TestTitle { get { return title; } }
@@ -247,7 +248,7 @@ namespace ClearDesk
             {
                 // 2.2.9: the list height must not depend on the width (a wider widget has a slightly taller bar and edges, which would make
                 // the icons shrink while widening). Use the largest bar / edges this height can get; the real ones are never bigger.
-                double sTop = WidgetLook.ContentScale(winH * 1000, winH, DefaultWidth, DefaultHeight, MinScale, MaxScale);
+                double sTop = WidgetLook.ContentScale(winH * 1000, winH, DefaultWidth, DefaultHeight, MinContentScale, MaxScale);
                 double hsTop = FolderLogic.CompactBarScale(1e6, winH);
                 H = Math.Max(1, winH - chromeH * Math.Max(s, sTop) - headNat * hsTop) - 4;
             }

@@ -19,7 +19,7 @@ namespace ClearDesk
 
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version == "2.2.9", "2.2.9 version string");
+            check(SettingsWindow.Version.StartsWith("2."), "2.2.9 version string");
             var c = LaunchpadStore.Compose(new[] { "a", "b", "c" }, new[] { "x", "b" }, new[] { "c", "y" });
             check(string.Join(",", c) == "x,b,a", "2.2.9 launchpad: pinned first in their saved order, then desktop items, removed ones hidden (" + string.Join(",", c) + ")");
             var pa = LaunchpadStore.PinArgs(new[] { "--pin-launchpad", @"C:\a b\x.exe", @"D:\y.lnk", "--other" }).ToList();

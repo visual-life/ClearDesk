@@ -213,10 +213,7 @@ namespace ClearDesk
                 return;
             Width = targetWidth;
             Height = targetHeight;
-            var area = SystemParameters.WorkArea;
-            Left = area.Left + (area.Width - Width) / 2;
-            Top = area.Bottom - Height - Program.S.DockOffset;
-            ApplyOffset();
+            ApplyOffset();      // 2.3.2: position (Left / Top) comes from DockPlacement
             LayoutIcons();
             if (refresh && pending)
                 Rebuild();

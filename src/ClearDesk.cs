@@ -22,6 +22,7 @@ namespace ClearDesk
         public double X = 20, Y = 20, Width = 520, Height = 360;
         public bool MaterialSelected = false;
         public bool Locked = false, Collapsed = false, List = false, Desktop = false, Enabled = true;
+        public bool EdgeHide = false;      // 2.3.0: 贴边隐藏 (per organizer, off by default)
         public string Material = "liquid";
         public double Scale = 1;
         public double CustomW = 0, CustomH = 0;
@@ -52,6 +53,10 @@ namespace ClearDesk
         public bool AllowUnverifiedTaskbar = false;   // 2.2.4: off by default; lets a TranslucentTB.exe of the shipped version with a valid signature run although its hash differs
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
         public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false, LiveDesktopBlur = false;
+        public bool DockAttention = true, DockAttentionPeek = false;   // 2.3.3: Dock item pulses while its app flashes for attention; optionally the auto-hidden Dock slides out
+        public bool TrayArea = true; public string TrayScope = "all";   // 2.3.3: 托盘图标 in 快捷控制 (all / hidden / visible)
+        public bool HideSearch = false;              // 2.3.1: hide the search box of 收纳格 and 启动台
+        public bool TopTaskbarFullHide = false;      // 2.3.0: hide the top taskbar completely; only the Windows key / Start shows it
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> ToolWidgets = new List<string>();   // 2.2.0: which of the new widgets are on
         public List<string> LaunchpadItems = new List<string>();
@@ -96,7 +101,20 @@ namespace ClearDesk
         static Window settings;
         static List<GlassWindow> windows = new List<GlassWindow>();
         internal static void RefreshDockOffset() { foreach (var d in windows.OfType<DockWindow>()) d.ApplyOffset(); }
+        /// <summary>2.3.1: 隐藏 / 显示搜索 (收纳格 and 启动台), saved in settings.json and applied to the windows that are open.</summary>
+        internal static void SetSearchHidden(bool hidden)
+        {
+            S.HideSearch = hidden;
+            Save();
+            foreach (var w in windows.ToArray())
+            {
+                var o = w as OrganizerWindow; if (o != null) o.ApplyChrome();
+                var l = w as LaunchpadWindow; if (l != null) l.ApplySearch();
+            }
+        }
         internal static void RefreshDockAutoHide() { foreach (var d in windows.OfType<DockWindow>()) d.RefreshAutoHide(); }
+        internal static void RefreshDockAttention() { foreach (var d in windows.OfType<DockWindow>()) d.ApplyAttention(false); }
+        internal static void RefreshTray() { foreach (var q in windows.OfType<QuickControlWindow>()) q.ApplyTraySetting(); }
         internal static IEnumerable<GlassWindow> OpenWindows { get { return windows.ToArray(); } }
         static DispatcherTimer refresh;
         public static string Config
@@ -139,6 +157,8 @@ namespace ClearDesk
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "--flash-helper") { TestHelpers233.RunFlash(args); return; }       // 2.3.3: test helper — a window that flashes its taskbar button (isolated)
+            if (args.Length > 0 && args[0] == "--tray-helper") { TestHelpers233.RunTray(args); return; }         // 2.3.3: test helper — a program with its own tray icon (isolated)
             if (args.Length > 0 && args[0] == "--guard")
             {
                 DesktopServices.Guard(args);
@@ -166,7 +186,7 @@ namespace ClearDesk
             if (args.Length > 0 && args[0] == "--weather-diag") { WeatherDiag.Run(args); return; }          // 2.1.1: diagnose location and weather sources
             LaunchArgs = args;
 
-            Rendering = args.Contains("--lyrics-test") || args.Contains("--weather-test") || args.Contains("--popup-benchmark") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
+            Rendering = args.Contains("--lyrics-test") || args.Contains("--weather-test") || args.Contains("--popup-benchmark") || args.Contains("--perf231") || args.Contains("--render") || args.Contains("--benchmark") || args.Contains("--regression-test");
             Preview = args.Contains("--preview") || Rendering || args.Contains("--integration-test");
             if (Preview)
                 Data = Path.Combine(Base, "preview-data");
@@ -184,7 +204,14 @@ namespace ClearDesk
             }
 
             bool created;
-            mutex = new Mutex(true, "Local\\ClearDesk." + Environment.UserName + (args.Contains("--regression-test") ? ".Regression" : Preview ? ".Preview" : ""), out created);
+            try { mutex = new Mutex(true, "Local\\ClearDesk." + Environment.UserName + (args.Contains("--regression-test") ? ".Regression" : Preview ? ".Preview" : ""), out created); }
+            catch (UnauthorizedAccessException)
+            {
+                // 2.3.1: the running copy belongs to a program with other rights (for example "以管理员身份运行"): its mutex cannot be opened. That is a running ClearDesk, not a crash.
+                try { Directory.CreateDirectory(Data); File.AppendAllText(Path.Combine(Data, "errors.log"), DateTime.Now.ToString("s") + " 另一个以不同权限运行的 ClearDesk 占用了单实例锁，本次启动退出。" + Environment.NewLine); } catch { }
+                if (!args.Contains("--startup")) MessageBox.Show("另一个 ClearDesk 正在运行（可能是以管理员身份启动的）。请先在任务管理器里结束它，或在它的托盘菜单里退出，再启动这个。", "ClearDesk");
+                return;
+            }
             if (!created)
             {
                 if (!Preview && InstancePipe.Send(args))
@@ -193,6 +220,8 @@ namespace ClearDesk
                 MessageBox.Show("ClearDesk 已在运行，请双击通知区域的图标打开设置。", "ClearDesk");
                 return;
             }
+            // 2.3.1: another ClearDesk of ANY version (older builds have no such mutex): ask, close it, wait for its crash guard, put the icons back
+            if (!Preview && !ResolveOtherInstances(args)) return;
 
             // Run-key launches start in System32; make relative lookups follow the install folder.
             try { Environment.CurrentDirectory = Base; } catch { }
@@ -238,6 +267,10 @@ namespace ClearDesk
             {
                 // Crash-safe: if an earlier session (and its guard) died with the top taskbar hidden, bring it back first.
                 try { TopTaskbar.Restore(); } catch (Exception e) { Log(e); }
+                try { DesktopServices.HealOrphans(); } catch (Exception e) { Log(e); }      // 2.3.5: a session that died without its guard
+                try { UiaCom.HealFlyouts(); } catch (Exception e) { Log(e); }      // 2.3.5: the ^ flyout left with an empty region by 2.3.4
+                try { DesktopIcons.HealAfterLastSession(); } catch (Exception e) { Log(e); }      // 2.3.5: icons changed by the last session and not put back
+                try { if (!S.HideAtStart) DesktopIcons.Heal("启动时"); } catch (Exception e) { Log(e); }      // 2.3.1: left hidden by a crash, an older version or another copy
                 try { Services.Apply(); } catch (Exception e) { Log(e); LogText("启动时应用桌面服务失败（已忽略，ClearDesk 继续运行）：" + e.Message); }   // 2.2.3: an optional service must never stop ClearDesk from starting
                 if (S.HideAtStart)
                     Services.SetIcons(false, false);
@@ -253,6 +286,8 @@ namespace ClearDesk
                     Services.Tick();
             };
             refresh.Start();
+            if (!Preview) { try { OtherInstances.Watch(); } catch (Exception e) { Log(e); } }      // 2.3.1: an older copy started after this one
+            if (!Preview) { try { Attention.Start(); } catch (Exception e) { Log(e); } }      // 2.3.3: taskbar flash → Dock pulse
             try { DesktopKeeper.Start(); } catch (Exception e) { Log(e); }      // 2.2.5: widgets stay on 显示桌面 / Win+D
             MemoryTrim.Start();
             if (!Preview)
@@ -283,10 +318,12 @@ namespace ClearDesk
                 Rebuild();
             }
 
-            if (requested == null && pinRequest.Count == 0 && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test") && !args.Contains("--update-e2e"))
+            if (requested == null && pinRequest.Count == 0 && !args.Contains("--lyrics-test") && !args.Contains("--weather-test") && !args.Contains("--popup-benchmark") && !args.Contains("--perf231") && !args.Contains("--startup") && !args.Contains("--benchmark") && !args.Contains("--integration-test") && !args.Contains("--regression-test") && !args.Contains("--update-e2e"))
                 ShowSettings();
             if (args.Contains("--popup-benchmark"))
                 PopupBenchmark.Start();
+            if (args.Contains("--perf231"))
+                V231Perf.Start(args);
             if (args.Contains("--regression-test"))
                 RegressionTest.Start();
             if (args.Contains("--weather-test"))
@@ -343,6 +380,25 @@ namespace ClearDesk
             mutex.Dispose();
         }
 
+        /// <summary>2.3.1: false = this start must stop (the user chose to keep the other copy, or it could not be closed).</summary>
+        static bool ResolveOtherInstances(string[] args)
+        {
+            List<ProcInfo> others;
+            try { others = OtherInstances.Find(); } catch (Exception e) { Log(e); return true; }
+            if (others.Count == 0) return true;
+            Directory.CreateDirectory(Data);
+            LogText("启动时发现另一个 ClearDesk：" + string.Join("；", others.Select(p => p.ToString())));
+            if (args.Contains("--startup")) return false;      // login launch: never fight over the desktop, stay silent
+            if (MessageBox.Show(OtherInstances.Question(others, false), "ClearDesk", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.Yes) != MessageBoxResult.Yes) return false;
+            var failed = OtherInstances.Close(others);
+            if (failed.Count > 0)
+            {
+                MessageBox.Show("没能关闭：\n" + OtherInstances.Describe(failed) + "\n\n可能是它以管理员权限运行。请在任务管理器里结束 ClearDesk.exe 再启动这个。", "ClearDesk");
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>2.2.4: settings.json exists but could not be read (locked): defaults are used for now and nothing is written until it can be read again.</summary>
         internal static bool ConfigBlocked;
         internal static string LoadNote;
@@ -389,7 +445,7 @@ namespace ClearDesk
                 foreach (var box in S.Boxes)
                 {
                     box.Collapsed = false;
-                    box.Height = Math.Max(170, box.Height);
+                    box.Height = Math.Max(OrganizerWindow.MinH, box.Height);
                 }
 
                 S.ConfigVersion = 4;
@@ -581,6 +637,13 @@ namespace ClearDesk
             }
         }
 
+        /// <summary>2.3.0: 完全隐藏任务栏 on / off (settings and tray menu).</summary>
+        internal static void SetTaskbarFullHide(bool on)
+        {
+            S.TopTaskbarFullHide = on; Save();
+            if (!Preview && Services != null) Services.Apply();
+        }
+
         static System.Drawing.Icon TrayIcon()
         {
             try
@@ -628,6 +691,10 @@ namespace ClearDesk
                     Services.SetIcons(true, false);
                 }));
             });
+            var fullHide = new Forms.ToolStripMenuItem("完全隐藏任务栏（按 Win 键显示）") { CheckOnClick = false };
+            fullHide.Click += delegate { App.Dispatcher.Invoke(new Action(delegate { SetTaskbarFullHide(!S.TopTaskbarFullHide); })); };
+            m.Opening += delegate { fullHide.Checked = S.TopTaskbarFullHide; };
+            m.Items.Add(fullHide);
             m.Items.Add("修复透明任务栏组件…", null, delegate
             {
                 App.Dispatcher.BeginInvoke(new Action(RepairTaskbarComponent));
@@ -647,7 +714,7 @@ namespace ClearDesk
 
         static Action balloonClick;
         internal static int Balloons; internal static string LastBalloon;   // test counters
-        internal static readonly bool QuietRun = Environment.GetCommandLineArgs().Skip(1).Any(a => a.EndsWith("-test", StringComparison.OrdinalIgnoreCase) || a == "--preview" || a == "--popup-benchmark");
+        internal static readonly bool QuietRun = Environment.GetCommandLineArgs().Skip(1).Any(a => a.EndsWith("-test", StringComparison.OrdinalIgnoreCase) || a == "--preview" || a == "--popup-benchmark" || a == "--perf231");
         internal static void Balloon(string title, string text) { Balloon(title, text, null); }
         internal static void Balloon(string title, string text, Action onClick)
         {
@@ -673,9 +740,8 @@ namespace ClearDesk
         public static void Quit()
         {
             Quitting = true;
-            Save();
-            foreach (var w in windows.ToArray())
-                w.Close();
+            try { Save(); } catch (Exception e) { Log(e); }
+            try { foreach (var w in windows.ToArray()) w.Close(); } catch (Exception e) { Log(e); }      // 2.3.5: whatever happens above, the exit handler (icons, taskbar, flyout) must run
             App.Shutdown();
         }
 
@@ -849,7 +915,7 @@ namespace ClearDesk
             }
             if (!target.Items.Contains(path, StringComparer.OrdinalIgnoreCase)) target.Items.Add(path);
             target.Excluded.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
-            target.Enabled = true; target.Collapsed = false; target.Height = Math.Max(170, target.Height);
+            target.Enabled = true; target.Collapsed = false; target.Height = Math.Max(OrganizerWindow.MinH, target.Height);
             Save();
             var existing = windows.OfType<OrganizerWindow>().FirstOrDefault(w => w.ExportName == target.Id && !w.WasClosed);
             if (existing == null) AddWindow(new OrganizerWindow(target));
@@ -890,7 +956,9 @@ namespace ClearDesk
                 return;
             }
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             launchpad = new LaunchpadWindow();
+            LaunchpadWindow.Prof.Add("ctor " + sw.Elapsed.TotalMilliseconds.ToString("0.0"));
             var w = launchpad;
             w.Closed += delegate
             {
@@ -898,7 +966,9 @@ namespace ClearDesk
                     launchpad = null;
             };
             AddWindow(w);
+            LaunchpadWindow.Prof.Add("addwindow " + sw.Elapsed.TotalMilliseconds.ToString("0.0"));
             w.Activate();
+            LaunchpadWindow.Prof.Add("activate " + sw.Elapsed.TotalMilliseconds.ToString("0.0"));
         }
 
         public static void Resources()

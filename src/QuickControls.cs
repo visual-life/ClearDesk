@@ -352,7 +352,7 @@ namespace ClearDesk
     // ---------------------------------------------------------------- widget
     public class QuickControlWindow : GlassWindow
     {
-        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); if (pages != null) pages.VerticalAlignment = extraH > 1 && !mixerOpen ? VerticalAlignment.Center : VerticalAlignment.Stretch; }
+        protected override void OnResponsive(double extraW, double extraH) { CenterBody(extraH); if (pages != null) pages.VerticalAlignment = extraH > 1 && !mixerOpen && !trayOpen ? VerticalAlignment.Center : VerticalAlignment.Stretch; }
         OutputVolume volume;
         RadioSwitch wifi, bluetooth;
         Windows.Devices.Enumeration.DeviceWatcher[] btWatchers;
@@ -424,6 +424,8 @@ namespace ClearDesk
             shortcuts.Add(ShortcutAction("\uE767", "声音", "打开音量合成器", delegate { ShowMixer(true); }));
             shortcuts.Add(Shortcut("\uE774", "可用网络", "ms-availablenetworks:"));
             root.Children.Add(shortcuts.Panel);
+            trayEntry = TrayEntry(out trayCount);       // 2.3.4: an entry like 声音 → opens the 托盘图标 page (no strip of tiny icons on the main page any more)
+            root.Children.Add(trayEntry);
             pages = new Grid(); pages.Children.Add(root); root.RenderTransform = mainShift;
             Body.Children.Add(pages);
 
@@ -432,6 +434,11 @@ namespace ClearDesk
                 volume.Changed += ShowVolume;
                 mixer = new MixerPage(volume, delegate { ShowMixer(false); }, DeviceMenu, delegate { ShowMixer(false); Open("ms-settings:apps-volume"); });
                 mixer.Visibility = Visibility.Collapsed; mixer.RenderTransform = mixerShift; pages.Children.Add(mixer);
+                tray = new TrayPage234(Dispatcher, delegate { ShowTray(false); }, delegate (string uri) { Open(uri); }) { CachePath = System.IO.Path.Combine(Program.Data, "tray-hidden.json"), IconsPath = System.IO.Path.Combine(Program.Data, "tray-icons.json") };
+                tray.Polling = delegate { return IsVisible && !State.Collapsed; };
+                tray.Toast = delegate (string g, string m) { Toast(g, m); };
+                tray.CountChanged = delegate (int n) { if (trayCount != null) trayCount.Text = n > 0 ? n + " 个图标" : "没有图标"; };
+                tray.Visibility = Visibility.Collapsed; tray.RenderTransform = trayShift; pages.Children.Add(tray);
                 ShowVolume();
                 wifi = new RadioSwitch(Windows.Devices.Radios.RadioKind.WiFi, Dispatcher);
                 bluetooth = new RadioSwitch(Windows.Devices.Radios.RadioKind.Bluetooth, Dispatcher);
@@ -446,8 +453,12 @@ namespace ClearDesk
                 WatchBluetooth();
             }
             ShowWifi(); ShowBluetooth();
+            if (!Program.Rendering) tray.Start(); else tray.Render(false);
+            FitTrayEntry(true);
+            Loaded += delegate { tray.PollVisible(); };
             Closed += delegate
             {
+                tray.Stop(); tray.Closed();
                 if (mixer != null) mixer.Stop();
                 if (signal != null) signal.Stop();
                 if (netHooked) try { Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged -= OnNetwork; } catch { }
@@ -456,6 +467,61 @@ namespace ClearDesk
                 if (bluetooth != null) bluetooth.Dispose();
                 if (btWatchers != null) foreach (var w in btWatchers) try { if (w.Status == Windows.Devices.Enumeration.DeviceWatcherStatus.Started || w.Status == Windows.Devices.Enumeration.DeviceWatcherStatus.EnumerationCompleted) w.Stop(); } catch { }
             };
+        }
+
+        TrayPage234 tray; Border trayEntry; TextBlock trayCount; bool trayOpen;
+        readonly TranslateTransform trayShift = new TranslateTransform();
+        const double BaseHeight = 285, EntryExtra = 44;
+        internal TrayPage234 Tray { get { return tray; } }
+        internal bool TrayOpen { get { return trayOpen; } }
+        internal Border TrayEntryButton { get { return trayEntry; } }
+        /// <summary>The main page has one more row (the 托盘图标 entry) than before 2.3.3, so the widget is that much taller; switched off, it is the old size again. Sizes the user set by hand are left alone.</summary>
+        void FitTrayEntry(bool starting)
+        {
+            bool on = Program.S.TrayArea; trayEntry.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            double with = BaseHeight + EntryExtra, h = Height;
+            bool oldDefault = Math.Abs(h - BaseHeight) < 1 || Math.Abs(h - with) < 1 || (h >= 366 && h <= 500 && Math.Abs((h - 367) % 44) < 1);    // 285, 329, or what 2.3.3's tray strip made of it (367 + 44 k)
+            if (on && (h < with || (starting && oldDefault && Math.Abs(h - with) > .5))) { State.Height = with; Height = with; }
+            else if (!on && Math.Abs(h - with) < 1) { State.Height = BaseHeight; Height = BaseHeight; }
+        }
+        internal void ApplyTraySetting() { if (!Program.S.TrayArea && trayOpen) ShowTray(false); FitTrayEntry(false); tray.ApplySettings(); tray.PollVisible(); }
+
+        Border TrayEntry(out TextBlock count)
+        {
+            var g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); g.ColumnDefinitions.Add(new ColumnDefinition()); g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var icon = Glyph("\uE70E", 14); icon.Margin = new Thickness(0, 0, 10, 0); g.Children.Add(icon);
+            var name = Program.Text("托盘图标", 13); name.FontWeight = FontWeights.SemiBold; name.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(name, 1); g.Children.Add(name);
+            count = Program.Text("读取中…", 11.5, "#C9D2E0"); count.VerticalAlignment = VerticalAlignment.Center; count.Margin = new Thickness(0, 0, 8, 0); Grid.SetColumn(count, 2); g.Children.Add(count);
+            var chevron = Glyph("\uE76C", 11); Grid.SetColumn(chevron, 3); g.Children.Add(chevron);
+            var b = new Border { Child = g, Height = 36, CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 0, 10, 0), Margin = new Thickness(0, 8, 0, 0), Background = OffBrush, BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, ToolTip = "查看托盘图标（包括被收起的），左键打开、右键弹出应用菜单" };
+            AutomationName(b, "托盘图标");
+            b.MouseEnter += delegate { b.Background = new SolidColorBrush(Color.FromArgb(54, 255, 255, 255)); };
+            b.MouseLeave += delegate { b.Background = OffBrush; };
+            b.MouseLeftButtonUp += (s, e) => { ShowTray(true); e.Handled = true; };
+            return b;
+        }
+
+        // 2.3.4: the 托盘图标 button opens a page inside the widget, the same way 声音 opens the volume mixer (slide + fade, ← goes back)
+        internal void ShowTray(bool show)
+        {
+            if (tray == null || show == trayOpen || (show && mixerOpen)) return;
+            trayOpen = show;
+            var main = mainPage; var page = tray; bool animate = IsVisible && !Program.Rendering;
+            pages.VerticalAlignment = VerticalAlignment.Stretch;
+            if (show)
+            {
+                page.Visibility = Visibility.Visible; page.Opened();
+                if (animate) Slide(main, mainShift, 0, -36, 1, 0, () => { if (trayOpen) main.Visibility = Visibility.Collapsed; }); else main.Visibility = Visibility.Collapsed;
+                if (animate) Slide(page, trayShift, 36, 0, 0, 1, null); else { page.Opacity = 1; trayShift.X = 0; }
+            }
+            else
+            {
+                page.Closed(); main.Visibility = Visibility.Visible;
+                if (animate) { Slide(page, trayShift, 0, 36, 1, 0, () => { if (!trayOpen) page.Visibility = Visibility.Collapsed; }); Slide(main, mainShift, -36, 0, 0, 1, null); }
+                else { page.Visibility = Visibility.Collapsed; main.Opacity = 1; mainShift.X = 0; }
+                OnResponsive(ExtraWidth, ExtraHeight);
+            }
         }
 
         sealed class UniformGrid3
@@ -529,7 +595,7 @@ namespace ClearDesk
         internal MixerPage TestMixer { get { return mixer; } }
         internal void ShowMixer(bool show)
         {
-            if (mixer == null || show == mixerOpen) return;
+            if (mixer == null || show == mixerOpen || (show && trayOpen)) return;
             mixerOpen = show;
             var main = mainPage; var page = mixer; bool animate = IsVisible && !Program.Rendering;
             pages.VerticalAlignment = VerticalAlignment.Stretch;

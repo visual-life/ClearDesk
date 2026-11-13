@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
 using System.Threading.Tasks;
@@ -39,6 +40,9 @@ namespace ClearDesk
 
         static DispatcherTimer timer;
         static bool hidden, revealed;
+        static string traySig = "";
+        static readonly Dictionary<IntPtr, Edge> edges = new Dictionary<IntPtr, Edge>();
+        static Edge EdgeFor(IntPtr t) { Edge e; return edges.TryGetValue(t, out e) ? e : Edge.Top; }
         // Slide animation: offset 0 = resting at the top edge, -height = fully above the screen.
         const double SlideMs = 180;
         static DispatcherTimer anim;
@@ -48,7 +52,11 @@ namespace ClearDesk
         static bool animating;
         static DateTime edgeSince = DateTime.MinValue, outsideSince = DateTime.MinValue, lastWork = DateTime.MinValue;
         static readonly Dictionary<uint, string> procNames = new Dictionary<uint, string>();
+        static DateTime holdUntil = DateTime.MinValue;
+        internal static void Hold(int ms) { holdUntil = DateTime.UtcNow.AddMilliseconds(ms); }
         public static bool Active { get { return hidden; } }
+        /// <summary>2.3.2: ClearDesk is hiding a tray on this edge right now (the Dock then rests on the physical screen bottom).</summary>
+        internal static bool HidesEdge(Edge e) { return hidden && edges.Values.Contains(e); }
         public static bool Revealed { get { return revealed; } }
 
         static IntPtr Dpi() { try { return SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch { return IntPtr.Zero; } }
@@ -72,17 +80,114 @@ namespace ClearDesk
             mon = mi.Monitor; return true;
         }
 
-        // A tray counts as "top" when it hugs the monitor's top edge and is a horizontal strip.
-        public static bool AtTop(IntPtr tray)
+        public enum Edge { None, Left, Top, Right, Bottom }
+
+        /// <summary>2.3.1: which monitor edge a tray hugs. A tray is a thin strip (less than a third of the monitor) that touches one edge. Pure geometry, any of the four sides.</summary>
+        internal static Edge EdgeOf(RECT r, RECT mon)
+        {
+            int w = r.R - r.L, h = r.B - r.T, mw = mon.R - mon.L, mh = mon.B - mon.T;
+            if (w <= 0 || h <= 0 || mw <= 0 || mh <= 0) return Edge.None;
+            // A taskbar that Windows itself auto-hid rests almost completely off the screen (a couple of pixels stay): that is Windows' business, not ours.
+            if (w > h * 3 && h < mh / 3)
+            {
+                int vis = Math.Min(r.B, mon.B) - Math.Max(r.T, mon.T);
+                if (vis * 2 < h) return Edge.None;
+                if (r.T <= mon.T + 1 && r.B >= mon.T - 1) return Edge.Top;
+                if (r.B >= mon.B - 1 && r.T <= mon.B + 1) return Edge.Bottom;
+            }
+            else if (h > w * 3 && w < mw / 3)
+            {
+                int vis = Math.Min(r.R, mon.R) - Math.Max(r.L, mon.L);
+                if (vis * 2 < w) return Edge.None;
+                if (r.L <= mon.L + 1 && r.R >= mon.L - 1) return Edge.Left;
+                if (r.R >= mon.R - 1 && r.L <= mon.R + 1) return Edge.Right;
+            }
+            return Edge.None;
+        }
+
+        [StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint uCallbackMessage, uEdge; public RECT rc; public IntPtr lParam; }
+        [DllImport("shell32.dll")] static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
+        static DateTime autoHideAt = DateTime.MinValue; static bool autoHide;
+        /// <summary>Windows' own "taskbar auto-hide" switch (ABM_GETSTATE / ABS_AUTOHIDE), asked at most twice a second.</summary>
+        internal static bool WindowsAutoHide()
+        {
+            if ((DateTime.UtcNow - autoHideAt).TotalMilliseconds < 500) return autoHide;
+            try { var d = new APPBARDATA(); d.cbSize = (uint)Marshal.SizeOf(typeof(APPBARDATA)); autoHide = (((ulong)SHAppBarMessage(4, ref d)) & 1) != 0; } catch { autoHide = false; }
+            autoHideAt = DateTime.UtcNow; return autoHide;
+        }
+
+        public static Edge EdgeOf(IntPtr tray)
         {
             RECT r, mon;
-            if (!GetWindowRect(tray, out r) || !Monitor(tray, out mon)) return false;
-            return r.T <= mon.T + 1 && r.B >= mon.T - 1 && (r.R - r.L) > (r.B - r.T) * 3 && r.B < mon.T + (mon.B - mon.T) / 3;
+            if (!GetWindowRect(tray, out r) || !Monitor(tray, out mon)) return Edge.None;
+            var e = EdgeOf(r, mon);
+            // 2.3.1: bottom / left / right with Windows' own auto-hide switched on: Windows hides and shows it itself - two programs moving one window would fight.
+            if (e != Edge.None && e != Edge.Top && WindowsAutoHide()) return Edge.None;
+            return e;
         }
+
+        // A tray counts as "top" when it hugs the monitor's top edge and is a horizontal strip.
+        public static bool AtTop(IntPtr tray) { return EdgeOf(tray) == Edge.Top; }
+
+        /// <summary>The visible part of a tray window (window coordinates) when <paramref name="fraction"/> of it (0..1) is shown, anchored to the screen edge it hugs.</summary>
+        internal static int[] ClipRect(Edge e, int w, int h, double fraction)
+        {
+            fraction = Math.Max(0, Math.Min(1, fraction));
+            int vw = (int)Math.Round(w * fraction), vh = (int)Math.Round(h * fraction);
+            switch (e)
+            {
+                case Edge.Bottom: return new[] { 0, h - vh, w, h };
+                case Edge.Left: return new[] { 0, 0, vw, h };
+                case Edge.Right: return new[] { w - vw, 0, w, h };
+                default: return new[] { 0, 0, w, vh };
+            }
+        }
+
+        /// <summary>The work area with the strip of this edge handed back to applications (the tray reserved it).</summary>
+        internal static RECT Claim(Edge e, RECT mon, RECT work)
+        {
+            switch (e)
+            {
+                case Edge.Top: work.T = mon.T; break;
+                case Edge.Bottom: work.B = mon.B; break;
+                case Edge.Left: work.L = mon.L; break;
+                case Edge.Right: work.R = mon.R; break;
+            }
+            return work;
+        }
+
+        /// <summary>The work area with the tray's strip taken out again.</summary>
+        internal static RECT Reserve(Edge e, RECT tray, RECT work)
+        {
+            switch (e)
+            {
+                case Edge.Top: if (work.T < tray.B) work.T = tray.B; break;
+                case Edge.Bottom: if (work.B > tray.T) work.B = tray.T; break;
+                case Edge.Left: if (work.L < tray.R) work.L = tray.R; break;
+                case Edge.Right: if (work.R > tray.L) work.R = tray.L; break;
+            }
+            return work;
+        }
+
+        /// <summary>A maximized window that fills the old work area follows the change of the work area on this edge; null = not affected.</summary>
+        internal static RECT? Shifted(Edge e, RECT r, RECT oldWork, RECT newWork)
+        {
+            switch (e)
+            {
+                case Edge.Top: if (newWork.T == oldWork.T || r.T < oldWork.T - 24 || r.T > oldWork.T + 2) return null; r.T += newWork.T - oldWork.T; return r;
+                case Edge.Bottom: if (newWork.B == oldWork.B || r.B > oldWork.B + 24 || r.B < oldWork.B - 2) return null; r.B += newWork.B - oldWork.B; return r;
+                case Edge.Left: if (newWork.L == oldWork.L || r.L < oldWork.L - 24 || r.L > oldWork.L + 2) return null; r.L += newWork.L - oldWork.L; return r;
+                case Edge.Right: if (newWork.R == oldWork.R || r.R > oldWork.R + 24 || r.R < oldWork.R - 2) return null; r.R += newWork.R - oldWork.R; return r;
+            }
+            return null;
+        }
+
+        /// <summary>Which trays ClearDesk takes over: the top ones for 顶部任务栏自动隐藏 (Windows cannot auto-hide a top taskbar), and every edge for 完全隐藏任务栏.</summary>
+        internal static bool Managed(Edge e, bool full) { return e == Edge.Top || (full && e != Edge.None); }
 
         public static void Sync()
         {
-            bool want = Program.S != null && Program.S.TopTaskbarAutoHide && !Program.Preview;
+            bool want = Program.S != null && (Program.S.TopTaskbarAutoHide || Program.S.TopTaskbarFullHide) && !Program.Preview;
             if (want && timer == null)
             {
                 timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(40) };
@@ -108,27 +213,45 @@ namespace ClearDesk
             var old = Dpi();
             try
             {
+                bool full = Program.S != null && Program.S.TopTaskbarFullHide;
                 var trays = Trays();
-                var top = trays.FindAll(AtTop);
+                var top = trays.FindAll(t => Managed(EdgeOf(t), full));
                 if (top.Count == 0)
                 {
-                    // Taskbar moved off the top edge (or explorer is restarting): give it back.
-                    if (hidden) { Restore(); hidden = revealed = false; Program.Services.MarkTopTaskbar(false); }
+                    // Taskbar moved off the edge it was hidden on (or explorer is restarting): give it back.
+                    if (hidden) { Restore(); hidden = revealed = false; edges.Clear(); Program.Services.MarkTopTaskbar(false); }
                     return;
                 }
-                if (!hidden) { Program.Services.MarkTopTaskbar(true); hidden = true; revealed = false; animOffset = -1; foreach (var t in top) { if (!IsWindowVisible(t)) ShowWindow(t, SW_SHOWNA); Clip(t, 0); } ClaimWork(top); }
+                // 2.3.1: a tray that changed edge (or a new one) is handled from scratch
+                string sig = string.Join(",", top.Select(t => t.ToInt64() + ":" + EdgeOf(t)).ToArray());
+                if (hidden && sig != traySig) { StopAnim(); Restore(); hidden = revealed = false; }
+                traySig = sig;
+                if (!hidden)
+                {
+                    Program.Services.MarkTopTaskbar(true); hidden = true; revealed = false; animOffset = -1;
+                    edges.Clear(); foreach (var t in top) edges[t] = EdgeOf(t);
+                    foreach (var t in top) { if (!IsWindowVisible(t)) ShowWindow(t, SW_SHOWNA); Clip(t, 0); }
+                    ClaimWork(top);
+                    Program.RefreshDockOffset();      // 2.3.2: the Dock follows the work area at once
+                }
 
                 POINT p; GetCursorPos(out p);
                 var now = DateTime.UtcNow;
-                bool shell = ShellSurfaceActive();
+                bool held = now < holdUntil;      // 2.3.3: ClearDesk's 托盘 panel needs the taskbar for a moment (right-click on a visible tray icon)
+                bool shell = ShellSurfaceActive() || held;
+                bool start = full && (StartOrSearchActive() || held);
                 if (!revealed)
                 {
                     bool atEdge = false;
-                    foreach (var t in top) { RECT mon; if (Monitor(t, out mon) && p.X >= mon.L && p.X < mon.R && p.Y <= mon.T + EdgePx - 1 && p.Y >= mon.T - 2 && Hot(t, p.X)) atEdge = true; }
-                    foreach (var t in top) RefreshHot(t, false);
+                    if (!full)      // 2.3.0 完全隐藏: the edge never wakes the taskbar
+                    {
+                        foreach (var t in top) { RECT mon; if (Monitor(t, out mon) && p.X >= mon.L && p.X < mon.R && p.Y <= mon.T + EdgePx - 1 && p.Y >= mon.T - 2 && Hot(t, p.X)) atEdge = true; }
+                        foreach (var t in top) RefreshHot(t, false);
+                    }
                     if (atEdge && !FullscreenForeground()) { if (edgeSince == DateTime.MinValue) edgeSince = now; }
                     else edgeSince = DateTime.MinValue;
-                    if (shell || (edgeSince != DateTime.MinValue && (now - edgeSince).TotalMilliseconds >= DwellMs))
+                    bool dwell = edgeSince != DateTime.MinValue && (now - edgeSince).TotalMilliseconds >= DwellMs;
+                    if (ShouldReveal(full, dwell, shell, start))
                     {
                         revealed = true; edgeSince = DateTime.MinValue; outsideSince = DateTime.MinValue;
                         Slide(top, 0);
@@ -139,11 +262,11 @@ namespace ClearDesk
                 else
                 {
                     bool inside = false;
-                    foreach (var t in top) { RECT r; if (GetWindowRect(t, out r) && p.X >= r.L - 4 && p.X < r.R + 4 && p.Y >= r.T - 4 && p.Y < r.B + 6) inside = true; }
+                    foreach (var t in top) { RECT r; if (GetWindowRect(t, out r) && p.X >= r.L - 6 && p.X < r.R + 6 && p.Y >= r.T - 6 && p.Y < r.B + 6) inside = true; }
                     if (animating) outsideSince = DateTime.MinValue;
-                    else if (inside || shell || MouseButtonsDown()) outsideSince = DateTime.MinValue;
+                    else if (ShouldStay(full, inside, shell, start, MouseButtonsDown())) outsideSince = DateTime.MinValue;
                     else if (outsideSince == DateTime.MinValue) outsideSince = now;
-                    else if ((now - outsideSince).TotalMilliseconds >= LeaveMs)
+                    else if ((now - outsideSince).TotalMilliseconds >= (full ? FullLeaveMs : LeaveMs))
                     {
                         revealed = false; outsideSince = DateTime.MinValue;
                         Slide(top, -1);
@@ -235,13 +358,13 @@ namespace ClearDesk
         [DllImport("gdi32.dll")] static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
 
-        // fraction: 0 = nothing visible, 1 = whole tray visible (region removed).
+        // fraction: 0 = nothing visible, 1 = whole tray visible (region removed). The visible part is anchored to the screen edge the tray hugs.
         static void Clip(IntPtr w, double fraction)
         {
             RECT r; if (!GetWindowRect(w, out r)) return;
             if (fraction >= 1) { SetWindowRgn(w, IntPtr.Zero, true); return; }
-            int h = (int)Math.Round((r.B - r.T) * Math.Max(0, fraction));
-            var rgn = CreateRectRgn(0, 0, r.R - r.L, h);
+            var c = ClipRect(EdgeFor(w), r.R - r.L, r.B - r.T, fraction);
+            var rgn = CreateRectRgn(c[0], c[1], c[2], c[3]);
             if (SetWindowRgn(w, rgn, true) == 0) DeleteObject(rgn);
         }
 
@@ -286,7 +409,7 @@ namespace ClearDesk
             animOffset = -1;
         }
 
-        // Give the strip the taskbar reserved back to applications on each top-tray monitor.
+        // Give the strip the taskbar reserved back to applications on each managed-tray monitor (any edge).
         // No SPIF_SENDCHANGE: explorer answers that broadcast by re-reserving its strip, which
         // makes the work area flap. Instead the already-maximized windows are resized directly.
         static void ClaimWork(List<IntPtr> top)
@@ -294,13 +417,14 @@ namespace ClearDesk
             foreach (var t in top)
             {
                 RECT mon; if (!Monitor(t, out mon)) continue;
+                var edge = EdgeFor(t);
                 var mi = new MONITORINFO { Size = Marshal.SizeOf(typeof(MONITORINFO)) };
                 GetMonitorInfo(MonitorFromWindow(t, 2), ref mi);
-                if (mi.Work.T > mon.T)
+                var w = Claim(edge, mon, mi.Work);
+                if (w.T != mi.Work.T || w.B != mi.Work.B || w.L != mi.Work.L || w.R != mi.Work.R)
                 {
-                    var w = mi.Work; w.T = mon.T;
                     if (SpiRect(SPI_SETWORKAREA, 0, ref w, 0))
-                        ShiftMaximized(MonitorFromWindow(t, 2), mi.Work.T, mon.T);
+                        ShiftMaximized(MonitorFromWindow(t, 2), edge, mi.Work, w);
                 }
             }
         }
@@ -310,20 +434,21 @@ namespace ClearDesk
         [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
-        static void ShiftMaximized(IntPtr monitor, int oldTop, int newTop)
+        static void ShiftMaximized(IntPtr monitor, Edge edge, RECT oldWork, RECT newWork)
         {
-            int delta = newTop - oldTop;
-            if (delta == 0) return;
             EnumWindows(delegate (IntPtr h, IntPtr p)
             {
                 RECT r;
-                if (IsWindowVisible(h) && IsZoomed(h) && MonitorFromWindow(h, 2) == monitor && GetWindowRect(h, out r) && r.T >= oldTop - 24 && r.T <= oldTop + 2)
-                    SetWindowPos(h, IntPtr.Zero, r.L, r.T + delta, r.R - r.L, r.B - r.T - delta, 0x4000 | 0x0200 | 0x0010 | 0x0004);
+                if (IsWindowVisible(h) && IsZoomed(h) && MonitorFromWindow(h, 2) == monitor && GetWindowRect(h, out r))
+                {
+                    var n = Shifted(edge, r, oldWork, newWork);
+                    if (n.HasValue) SetWindowPos(h, IntPtr.Zero, n.Value.L, n.Value.T, n.Value.R - n.Value.L, n.Value.B - n.Value.T, 0x4000 | 0x0200 | 0x0010 | 0x0004);
+                }
                 return true;
             }, IntPtr.Zero);
         }
 
-        // Show every tray and let the top strip be reserved again. Also used by the crash guard.
+        // Show every tray and let its strip be reserved again (any edge). Also used by the crash guard.
         public static void Restore()
         {
             var old = Dpi();
@@ -336,15 +461,41 @@ namespace ClearDesk
                     if (GetWindowRect(t, out rr) && Monitor(t, out mm) && rr.T < mm.T && (rr.R - rr.L) > (rr.B - rr.T) * 3)
                         SetWindowPos(t, IntPtr.Zero, rr.L, mm.T, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x0200 | 0x0400);
                     ShowWindow(t, SW_SHOWNA);
-                    if (!AtTop(t)) continue;
                     RECT r, mon; if (!GetWindowRect(t, out r) || !Monitor(t, out mon)) continue;
+                    var edge = EdgeOf(r, mon);
+                    if (edge == Edge.None) continue;
                     var mi = new MONITORINFO { Size = Marshal.SizeOf(typeof(MONITORINFO)) };
                     GetMonitorInfo(MonitorFromWindow(t, 2), ref mi);
-                    if (mi.Work.T < r.B) { var w = mi.Work; w.T = r.B; if (SpiRect(SPI_SETWORKAREA, 0, ref w, 0)) ShiftMaximized(MonitorFromWindow(t, 2), mi.Work.T, r.B); }
+                    var w = Reserve(edge, r, mi.Work);
+                    if (w.T != mi.Work.T || w.B != mi.Work.B || w.L != mi.Work.L || w.R != mi.Work.R)
+                        if (SpiRect(SPI_SETWORKAREA, 0, ref w, 0)) ShiftMaximized(MonitorFromWindow(t, 2), edge, mi.Work, w);
                 }
             }
             catch { }
             finally { Undpi(old); }
+        }
+
+        // ---- 2.3.0 完全隐藏 (full hide): only Start / search (Win key, Ctrl+Esc) bring the taskbar; the top edge does not.
+        // No keyboard hook: the Start menu itself becoming the foreground window is the signal, so no key is ever intercepted.
+        const int FullLeaveMs = 250;
+        /// <summary>Hidden -> shown? Auto-hide: edge dwell or any shell surface (Start, tray flyout…). Full hide: only Start / search.</summary>
+        internal static bool ShouldReveal(bool full, bool edgeDwell, bool shellSurface, bool startOrSearch)
+        {
+            return full ? startOrSearch : (shellSurface || edgeDwell);
+        }
+        /// <summary>Shown -> keep shown? While Start / search is open, while the pointer is on the taskbar or a button is held,
+        /// and (both modes) while a shell surface opened from the taskbar (tray flyout, jump list) is in front.</summary>
+        internal static bool ShouldStay(bool full, bool pointerInside, bool shellSurface, bool startOrSearch, bool buttonsDown)
+        {
+            return startOrSearch || shellSurface || pointerInside || buttonsDown;
+        }
+        static readonly string[] startProcs = { "startmenuexperiencehost", "searchhost", "searchapp" };
+        static bool StartOrSearchActive()
+        {
+            var fg = GetForegroundWindow();
+            if (fg == IntPtr.Zero) return false;
+            uint pid; GetWindowThreadProcessId(fg, out pid);
+            return Array.IndexOf(startProcs, ProcName(pid)) >= 0;
         }
 
         static readonly string[] shellProcs = { "startmenuexperiencehost", "searchhost", "searchapp", "shellexperiencehost", "shellhost" };

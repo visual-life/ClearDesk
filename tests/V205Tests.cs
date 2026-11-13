@@ -20,7 +20,7 @@ namespace ClearDesk
             w.SetScale(9, false);
             check(Math.Abs(w.ContentScale - GlassWindow.MaxScale) < .001, "scale is clamped to the maximum");
             w.SetScale(.1, false);
-            check(Math.Abs(w.ContentScale - GlassWindow.MinScale) < .001, "scale is clamped to the minimum");
+            check(Math.Abs(w.ContentScale - Math.Max(GlassWindow.MinScale, Math.Min(w.TestMinW / w.Width, w.TestMinH / w.Height))) < .02, "scale is clamped to the minimum (2.3.1: the smallest size, " + w.TestMinW + " px wide)");
             w.SetScale(1, false); w.UpdateLayout(); await Task.Delay(250);
             check(Math.Abs(w.ActualWidth - aw) < 3, "reset returns to the original size");
             check(w.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Any(m => Equals(m.Tag, "size")), "widget menu has 恢复默认大小");

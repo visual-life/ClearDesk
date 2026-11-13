@@ -105,8 +105,12 @@ namespace ClearDesk
             };
             ContextMenu.Items.Insert(0, Item("打开桌面启动台", Program.Launchpad));
             running.Changed += delegate { ScheduleRebuild(); };
+            attentionHandler = delegate { Dispatcher.BeginInvoke(new Action(delegate { if (!WasClosed) { if (!AnyAttentionMatched()) running.Refresh(); ApplyAttention(true); } })); };
+            Attention.Changed += attentionHandler;
             Closed += delegate
             {
+                Attention.Changed -= attentionHandler;
+                if (attentionTimer != null) attentionTimer.Stop();
                 if (rebuildTimer != null) rebuildTimer.Stop();
                 StopFrames();
                 FinishTransition(false);
@@ -134,6 +138,7 @@ namespace ClearDesk
                     autoHide = new DockAutoHide(this);
                     autoHide.Start();
                 }
+                WatchGeometry();
             };
             IsVisibleChanged += delegate
             {
@@ -202,11 +207,36 @@ namespace ClearDesk
         internal void ApplyOffset()
         {
             if (WasClosed) return;
-            var wa = SystemParameters.WorkArea;
-            ShownTop = wa.Bottom - Height - Program.S.DockOffset;
+            var g = Geometry(); geometrySig = DockPlacement.Signature(g);
+            ShownTop = DockPlacement.Top(g, Height, Program.S.DockOffset);
             if (autoHide == null || !autoHide.Hidden) { BeginAnimation(TopProperty, null); Top = ShownTop; }
             if (autoHide != null) autoHide.Evaluate();
         }
+
+        // 2.3.2: the Dock rests on the physical bottom of the screen (taskbar hidden / on another edge) or on top of the visible bottom taskbar - never on a stale work area.
+        internal DockGeometry Geometry() { return DockPlacement.Provider(this); }
+        internal double HiddenTop { get { return DockPlacement.MonitorBottomDip(Geometry()) + 4; } }
+        string geometrySig = "";
+        DispatcherTimer geometryTimer;
+        void WatchGeometry()
+        {
+            if (geometryTimer != null) return;
+            geometryTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(400) };
+            geometryTimer.Tick += delegate
+            {
+                if (WasClosed) return;
+                if (DockPlacement.Signature(Geometry()) == geometrySig) return;
+                GeometryChanges++;
+                if (!rebuilding && !transitioning) Rebuild(); else ApplyOffset();      // Rebuild sizes the Dock to the work area and calls ApplyOffset's placement
+            };
+            geometryTimer.Start();
+            Closed += delegate { geometryTimer.Stop(); };
+        }
+        internal int GeometryChanges;
+        internal void TestCheckGeometry() { if (DockPlacement.Signature(Geometry()) != geometrySig) { GeometryChanges++; Rebuild(); } }
+        /// <summary>Bottom of the visible plate, physical pixels (what the user sees against the screen edge).</summary>
+        internal double TestPlateBottomPx { get { var g = Geometry(); return (Top + Canvas.GetTop(plate) + plate.Height) * (g.Scale > 0 ? g.Scale : 1); } }
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi) { base.OnDpiChanged(oldDpi, newDpi); if (IsLoaded) Dispatcher.BeginInvoke(new Action(delegate { if (!WasClosed) Rebuild(); }), DispatcherPriority.Background); }
 
         internal void RefreshAutoHide() { if (autoHide != null) autoHide.Evaluate(); }
 
@@ -255,6 +285,71 @@ namespace ClearDesk
         internal IntPtr TestBackdropHandle { get { return liveBackdrop == null ? IntPtr.Zero : liveBackdrop.Handle; } }
         internal bool TestLiveFrost { get { return liveBackdrop != null && liveBackdrop.Enabled; } }
 
+        // ---- 2.3.3: attention (an app flashes its taskbar button)
+        readonly List<Border> halos = new List<Border>();
+        Action attentionHandler; DispatcherTimer attentionTimer;
+        internal const double SteadyAfterSeconds = 12;
+        internal int AttentionApplied;
+        bool AnyAttentionMatched()
+        {
+            foreach (var w in Attention.Windows)
+                foreach (var e in entries) if (Attention.Matches(e, w)) return true;
+            return Attention.Windows.Length == 0;
+        }
+        internal bool ItemAttention(int entryIndex) { return entryIndex >= 0 && entryIndex + 1 < halos.Count && (bool)halos[entryIndex + 1].Tag; }
+        internal Button TestButton(int i) { return buttons[i]; }
+        internal Border TestHalo(int entryIndex) { return halos[entryIndex + 1]; }
+        internal int AttentionItems { get { return halos.Count(h => (bool)h.Tag); } }
+        internal List<DockEntry> TestEntries { get { return entries; } }
+        internal void ApplyAttention(bool announce)
+        {
+            AttentionApplied++;
+            bool enabled = Program.S.DockAttention;
+            bool started = false, any = false;
+            for (int i = 1; i < buttons.Count && i - 1 < entries.Count && i < halos.Count; i++)
+            {
+                DateTime? since = enabled ? Attention.Since(entries[i - 1]) : null;
+                var halo = halos[i]; bool was = (bool)halo.Tag, on = since != null;
+                if (on) any = true;
+                if (on && !was) { halo.Tag = true; StartHalo(halo, buttons[i], Attention.Now() - since.Value); started = true; }
+                else if (!on && was) { halo.Tag = false; StopHalo(halo); }
+            }
+            if (any)
+            {
+                if (attentionTimer == null)
+                {
+                    attentionTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(900) };
+                    attentionTimer.Tick += delegate { if (WasClosed) { attentionTimer.Stop(); return; } if (Attention.Prune()) ApplyAttention(false); else if (AttentionItems == 0) attentionTimer.Stop(); };
+                }
+                if (!attentionTimer.IsEnabled) attentionTimer.Start();
+            }
+            else if (attentionTimer != null) attentionTimer.Stop();
+            if (announce && started && Program.S.DockAttentionPeek && autoHide != null) autoHide.PeekFor(4500);
+        }
+
+        void StartHalo(Border halo, Button button, TimeSpan elapsed)
+        {
+            halo.Visibility = Visibility.Visible;
+            double left = SteadyAfterSeconds - elapsed.TotalSeconds;
+            if (Program.Rendering || !SystemParameters.ClientAreaAnimation || left <= 0) { halo.BeginAnimation(OpacityProperty, null); halo.Opacity = .85; return; }
+            var pulse = new DoubleAnimation(.3, 1, TimeSpan.FromMilliseconds(700)) { AutoReverse = true, RepeatBehavior = new RepeatBehavior(TimeSpan.FromSeconds(left)), EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }, FillBehavior = FillBehavior.Stop };
+            pulse.Completed += delegate { if ((bool)halo.Tag) { halo.BeginAnimation(OpacityProperty, null); halo.Opacity = .85; } };
+            halo.Opacity = .3;
+            halo.BeginAnimation(OpacityProperty, pulse);
+            if (elapsed.TotalSeconds < 1.5 && double.IsNaN(cursor))
+            {
+                var tt = new TranslateTransform(); button.RenderTransform = tt;
+                var hop = new DoubleAnimation(0, -14, TimeSpan.FromMilliseconds(260)) { AutoReverse = true, RepeatBehavior = new RepeatBehavior(3), EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop };
+                tt.BeginAnimation(TranslateTransform.YProperty, hop);
+            }
+        }
+
+        void StopHalo(Border halo)
+        {
+            halo.BeginAnimation(OpacityProperty, null);
+            halo.Opacity = 0; halo.Visibility = Visibility.Collapsed;
+        }
+
         public void Rebuild()
         {
             if (rebuilding || WasClosed)
@@ -279,10 +374,12 @@ namespace ClearDesk
                 buttons.Clear();
                 sizes.Clear();
                 dots.Clear();
+                halos.Clear();
                 entries = running.Entries(Program.S.Pins); builtSignature = Signature(entries); RebuildCount++;
                 pinnedCount = entries.Count(e => e.Pinned);
                 separatorBefore = entries.Any(e => !e.Pinned) ? pinnedCount + 1 : -1;
-                var wa = SystemParameters.WorkArea;
+                var geo = Geometry(); geometrySig = DockPlacement.Signature(geo);
+                var wa = DockPlacement.WorkDip(geo);
                 int count = entries.Count + 1;
                 double gap = separatorBefore >= 0 ? 18 : 0;
                 baseSize = Math.Min(Program.S.DockSize, Math.Max(16, (wa.Width - 180 - gap) / count - 9));
@@ -293,7 +390,7 @@ namespace ClearDesk
                 Height = animate ? Math.Max(previousHeight, targetHeight) : targetHeight;
                 State.Height = targetHeight;
                 Left = wa.Left + (wa.Width - Width) / 2;
-                ShownTop = wa.Bottom - Height - Program.S.DockOffset;
+                ShownTop = DockPlacement.Top(geo, Height, Program.S.DockOffset);
                 if (autoHide == null || !autoHide.Hidden) Top = ShownTop;
                 AddIcon(null);
                 foreach (var entry in entries)
@@ -302,6 +399,7 @@ namespace ClearDesk
                     canvas.Children.Add(separator);
                 canvas.Children.Add(marker);
                 LayoutIcons();
+                ApplyAttention(false);
                 if (animate)
                     BeginTransition(previous, previousPlateWidth, previousPlateHeight, previousSeparator, previousSeparatorX);
             }
@@ -411,9 +509,21 @@ namespace ClearDesk
                 IsHitTestVisible = false,
                 Visibility = entry != null && entry.IsRunning ? Visibility.Visible : Visibility.Collapsed
             };
+            var halo = new Border
+            {
+                CornerRadius = new CornerRadius(100),
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed,
+                Opacity = 0,
+                Tag = false,
+                Background = new RadialGradientBrush { GradientStops = new GradientStopCollection { new GradientStop(Color.FromArgb(235, 255, 166, 56), 0), new GradientStop(Color.FromArgb(150, 255, 140, 40), .55), new GradientStop(Color.FromArgb(0, 255, 140, 40), 1) } }
+            };
+            if (!Program.Rendering) halo.CacheMode = new BitmapCache();
+            halos.Add(halo);
             buttons.Add(b);
             sizes.Add(baseSize);
             dots.Add(dot);
+            canvas.Children.Add(halo);
             canvas.Children.Add(b);
             canvas.Children.Add(dot);
         }
@@ -565,6 +675,7 @@ namespace ClearDesk
                 Canvas.SetLeft(b, x);
                 Canvas.SetTop(b, Height - 18 - sizes[i]);
                 Canvas.SetLeft(dots[i], x + sizes[i] / 2 - 2);
+                { var halo = halos[i]; double hs = sizes[i] * 1.6; halo.Width = halo.Height = hs; Canvas.SetLeft(halo, x + sizes[i] / 2 - hs / 2); Canvas.SetTop(halo, Height - 18 - sizes[i] / 2 - hs / 2); }
                 Canvas.SetTop(dots[i], Height - 11);
                 var view = b.Content as Viewbox;
                 if (view != null)

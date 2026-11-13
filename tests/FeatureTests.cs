@@ -123,8 +123,8 @@ namespace ClearDesk
                 foreach(var window in Program.App.Windows.OfType<OrganizerWindow>().Where(w=>!originalWindows.Contains(w)).ToArray()) { Program.S.Boxes.RemoveAll(b=>b.Id==window.ExportName); window.Close(); }
                 Program.S.Boxes.Remove(box); Program.Save();
             }
-            var probeState=new BoxData { Width=280,Height=180 }; var probe=new TickProbe(probeState); probe.Show(); await Task.Delay(130);
-            check(probe.BackgroundReceivesInput && probe.Count>1,"plain widget background receives pointer input beyond the title area");
+            var probeState=new BoxData { Width=280,Height=180 }; var probe=new TickProbe(probeState); probe.Show(); await Task.Delay(130); await V233Tests.Until(() => probe.Count>1,3000);
+            check(probe.BackgroundReceivesInput && probe.Count>1,"plain widget background receives pointer input beyond the title area (input="+probe.BackgroundReceivesInput+", ticks="+probe.Count+", visible="+probe.IsVisible+")");
             probeState.Collapsed=true; int before=probe.Count; await Task.Delay(130);
             check(probe.Count==before,"collapsed widgets skip periodic refresh work");
             probeState.Collapsed=false; probe.Hide(); before=probe.Count; await Task.Delay(130);

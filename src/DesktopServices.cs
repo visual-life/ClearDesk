@@ -22,6 +22,7 @@ namespace ClearDesk
         public int TaskbarProcessId;
         public string TaskbarPath;
         public bool TopTaskbarHidden;
+        public bool WindowsHidesAtStart;      // 2.3.5: Windows' own "显示桌面图标" switch was already off when the session began (then it stays off afterwards)
     }
 
     public class DesktopServices : IDisposable
@@ -38,17 +39,18 @@ namespace ClearDesk
         Animator animator = new Animator();
         public DesktopServices()
         {
-            recovery = Path.Combine(Program.Data, "recovery-v11.json");
+            recovery = Path.Combine(Program.Data, "recovery-v12-" + Process.GetCurrentProcess().Id + ".json");   // 2.3.1: one file per session (two copies shared one file) and not the file old guards read
             eventProc = WinEvent;
+            try { restore.WindowsHidesAtStart = DesktopIcons.WindowsHides(); } catch { }      // 2.3.5: read once, when the session starts
         }
 
         void EnsureRecovery()
         {
             if (guardian != null || SkipGuardian)
                 return;
-            var h = Native.Icons();
+            var h = DesktopIcons.Handle();
             restore.IconHandle = h.ToInt64();
-            restore.IconsVisible = h == IntPtr.Zero || Native.IsWindowVisible(h);
+            restore.IconsVisible = DesktopIcons.WantedVisible;      // 2.3.1: never the live state (another ClearDesk may have hidden the icons): that put "hidden" back on exit
             WriteRecovery();
             guardian = Process.Start(new ProcessStartInfo(Path.Combine(Program.Base, "ClearDesk.exe"), "--guard " + Process.GetCurrentProcess().Id + " \"" + recovery + "\"") { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
         }
@@ -358,23 +360,24 @@ namespace ClearDesk
 
         public void ToggleIcons()
         {
-            var h = Native.Icons();
+            var h = DesktopIcons.Handle();
             if (h != IntPtr.Zero)
-                SetIcons(!Native.IsWindowVisible(h), false);
+                SetIcons(!DesktopIcons.IsVisible(h), false);
         }
 
         public void SetIcons(bool visible, bool automatic)
         {
             if (Program.Preview)
                 return;
-            var h = Native.Icons();
+            var h = DesktopIcons.Handle();
             if (h == IntPtr.Zero)
                 return;
             EnsureRecovery();
+            if (!restore.IconsChanged) DesktopIcons.MarkTouched(restore.WindowsHidesAtStart);      // 2.3.5: removed again once the icons are put back (exit or crash guard)
             restore.IconsChanged = true;
             restore.IconHandle = h.ToInt64();
             WriteRecovery();
-            Native.ShowWindow(h, visible ? 5 : 0);
+            DesktopIcons.Show(h, visible);
             autoHidden = !visible && automatic;
         }
 
@@ -382,9 +385,8 @@ namespace ClearDesk
         {
             if (restore.IconsChanged)
             {
-                var h = Native.Icons();
-                if (h != IntPtr.Zero)
-                    Native.ShowWindow(h, restore.IconsVisible ? 5 : 0);
+                DesktopIcons.Restore(restore.WindowsHidesAtStart);      // 2.3.5: visible, and Windows' own switch back on if it was turned off meanwhile (unless it was off when this session began)
+                DesktopIcons.ClearMarker();
                 restore.IconsChanged = false;
                 autoHidden = false;
                 WriteRecovery();
@@ -407,8 +409,8 @@ namespace ClearDesk
                     uint idle = unchecked((uint)Environment.TickCount - li.time);
                     if (idle > Program.S.IdleSeconds * 1000)
                     {
-                        var h = Native.Icons();
-                        if (h != IntPtr.Zero && Native.IsWindowVisible(h))
+                        var h = DesktopIcons.Handle();
+                        if (h != IntPtr.Zero && DesktopIcons.IsVisible(h))
                             SetIcons(false, true);
                     }
                     else if (autoHidden && Program.S.RestoreOnInput)
@@ -443,6 +445,7 @@ namespace ClearDesk
             RestoreIcons();
             taskbar.Dispose();
             try { TopTaskbar.Stop(); } catch { }
+            try { UiaCom.HealFlyouts(); } catch { }      // 2.3.5
             if (File.Exists(recovery))
                 File.Delete(recovery);
             if (guardian != null)
@@ -466,6 +469,13 @@ namespace ClearDesk
             }
 
             string path = args[2];
+            try { UiaCom.HealFlyouts(); } catch { }      // 2.3.5: a flyout left with an empty region by 2.3.4 (or anything else)
+            ApplyRestore(path, true);
+        }
+
+        /// <summary>2.3.5: puts back what the session described in <paramref name="path"/> changed (icons, taskbar). Used by the crash guard and, for sessions that died without a guard, at start-up.</summary>
+        internal static void ApplyRestore(string path, bool closeTaskbar)
+        {
             try
             {
                 if (!File.Exists(path))
@@ -473,12 +483,11 @@ namespace ClearDesk
                 var r = new JavaScriptSerializer().Deserialize<RestoreState>(File.ReadAllText(path));
                 if (r.IconsChanged)
                 {
-                    var h = Native.Icons();
-                    if (h != IntPtr.Zero)
-                        Native.ShowWindow(h, r.IconsVisible ? 5 : 0);
+                    DesktopIcons.Restore(r.WindowsHidesAtStart);
+                    DesktopIcons.ClearMarker();
                 }
-
-                TaskbarService.CloseOwned(r.TaskbarProcessId, r.TaskbarPath);
+                if (closeTaskbar)
+                    TaskbarService.CloseOwned(r.TaskbarProcessId, r.TaskbarPath);
                 if (r.TopTaskbarHidden)
                     TopTaskbar.Restore();
                 File.Delete(path);
@@ -486,6 +495,28 @@ namespace ClearDesk
             catch
             {
             }
+        }
+
+        /// <summary>2.3.5, at start-up: recovery files of sessions that are gone (killed together with their guard, power loss) are applied and removed. Files of running programs are left alone.</summary>
+        internal static int HealOrphans()
+        {
+            int n = 0;
+            try
+            {
+                int me = Process.GetCurrentProcess().Id;
+                foreach (var f in Directory.GetFiles(Program.Data, "recovery-v12-*.json"))
+                {
+                    int pid;
+                    if (!int.TryParse(Path.GetFileNameWithoutExtension(f).Substring("recovery-v12-".Length), out pid) || pid == me) continue;
+                    bool alive = false;
+                    try { using (var p = Process.GetProcessById(pid)) alive = !p.HasExited && p.ProcessName.StartsWith("ClearDesk", StringComparison.OrdinalIgnoreCase); } catch { }
+                    if (alive) continue;
+                    ApplyRestore(f, false);      // the taskbar helper of a gone session is not ours to close (its process id may belong to something else by now)
+                    n++;
+                }
+            }
+            catch { }
+            return n;
         }
     }
 

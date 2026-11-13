@@ -52,12 +52,17 @@ namespace ClearDesk
             IconSize = 56
         };
         TextBox search;
+        Border searchBorder;
+        MenuItem searchMenuItem;
         List<string> paths = new List<string>();
         bool dismissing;
         OutsideClickWatcher outside;
         DispatcherTimer deactivateTimer;
         DockBackdrop liveBackdrop;
         internal static DateTime AnimationUntil;
+        internal static readonly List<string> Prof = new List<string>();
+        System.Diagnostics.Stopwatch born = System.Diagnostics.Stopwatch.StartNew();
+        static readonly string Variant = "C";
         public LaunchpadWindow() : base(CreateState(), "启动台")
         {
             AnimationUntil = DateTime.UtcNow.AddMilliseconds(350);
@@ -73,7 +78,7 @@ namespace ClearDesk
             LocationChanged += delegate { SyncBackdrop(); };
             SizeChanged += delegate { SyncBackdrop(); };
             IsVisibleChanged += delegate { SyncBackdrop(); };
-            Root.Opacity = 0;
+            if (Variant == "B" || Variant == "C" || Variant == "D") Opacity = 0; else Root.Opacity = 0;
             Root.RenderTransform = new TranslateTransform(0, 10);
             Topmost = true;
             ShowActivated = true;
@@ -88,7 +93,7 @@ namespace ClearDesk
             };
             bar.ColumnDefinitions.Add(new ColumnDefinition());
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var searchBorder = new Border
+            searchBorder = new Border
             {
                 CornerRadius = new CornerRadius(20),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(130, 255, 255, 255)),
@@ -133,8 +138,13 @@ namespace ClearDesk
                 Close();
             };
             icons.MenuFor = BuildItemMenu;
+            Prof.Add("ctor-before-items " + born.Elapsed.TotalMilliseconds.ToString("0.0"));
             paths = LaunchpadStore.Paths();
+            restPending = paths.Count > FirstBatch;
+            Prof.Add("paths " + born.Elapsed.TotalMilliseconds.ToString("0.0") + " n=" + paths.Count);
+            ApplySearch();
             Refresh();
+            Prof.Add("refresh " + born.Elapsed.TotalMilliseconds.ToString("0.0"));
             KeyDown += delegate (object s, KeyEventArgs e)
             {
                 if (e.Key == Key.Escape)
@@ -171,8 +181,10 @@ namespace ClearDesk
                 {
                     if (!WasClosed && !dismissing)
                     {
+                        Prof.Add("loaded-bg " + born.Elapsed.TotalMilliseconds.ToString("0.0"));
                         UpdateLayout();
                         icons.SettleLayout();
+                        Prof.Add("settled " + born.Elapsed.TotalMilliseconds.ToString("0.0"));
                         AnimatePopup(true);
                     }
                 }));
@@ -203,7 +215,20 @@ namespace ClearDesk
             };
         }
 
-        internal void ReloadItems() { paths = LaunchpadStore.Paths(); Refresh(); }
+        /// <summary>2.3.1: the search box follows 隐藏搜索 (a hidden box never filters).</summary>
+        internal void ApplySearch()
+        {
+            if (searchBorder == null) return;
+            bool hide = Program.S.HideSearch;
+            searchBorder.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
+            if (searchMenuItem != null) searchMenuItem.IsChecked = !hide;
+            if (hide && search != null && (search.Text ?? "").Length > 0) search.Text = "";
+        }
+        internal bool TestSearchVisible { get { return searchBorder != null && searchBorder.Visibility == Visibility.Visible; } }
+        internal MenuItem TestSearchItem { get { return searchMenuItem; } }
+
+        internal void ReloadItems() { paths = LaunchpadStore.Paths(); Refresh(true); }
+        internal FluidGrid TestGrid { get { return icons; } }
         internal IList<string> TestPaths { get { return paths; } }
 
         internal ContextMenu BuildItemMenu(string path)
@@ -302,6 +327,9 @@ namespace ClearDesk
             FillRestore(restore);
             menu.Opened += delegate { FillRestore(restore); };
             menu.Items.Add(restore);
+            searchMenuItem = new MenuItem { Header = "显示搜索", IsCheckable = true, IsChecked = !Program.S.HideSearch };
+            searchMenuItem.Click += delegate { Program.SetSearchHidden(!searchMenuItem.IsChecked); };
+            menu.Items.Add(searchMenuItem);
             if (settings != null)
             {
                 menu.Items.Add(new Separator());
@@ -398,8 +426,12 @@ namespace ClearDesk
                 SyncBackdrop();
                 liveBackdrop.Fade(show ? 1f : 0f, (int)time.TotalMilliseconds);
             }
-            Root.BeginAnimation(OpacityProperty, new DoubleAnimation(show ? 1 : 0, time) { EasingFunction = ease });
-            move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(show ? 0 : 6, time) { EasingFunction = ease });
+            var fade = new DoubleAnimation(show ? 1 : 0, time) { EasingFunction = ease };
+            if (Variant != "0" && Variant != "D") Root.CacheMode = new BitmapCache();
+            fade.Completed += delegate { if (show) { Root.CacheMode = null; FinishOpen(); } };
+            if (Variant == "B" || Variant == "C" || Variant == "D") BeginAnimation(OpacityProperty, fade); else Root.BeginAnimation(OpacityProperty, fade);
+            if (Variant == "C" || Variant == "D") { move.Y = show ? 0 : 6; }
+            else move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(show ? 0 : 6, time) { EasingFunction = ease });
         }
 
         void AddFiles()
@@ -445,9 +477,20 @@ namespace ClearDesk
             timer.Start();
         }
 
-        void Refresh()
+        // 2.3.1: the first screen of icons is laid out and drawn before the animation; the rest (below the fold) is added right after it, so opening is not slowed by 60+ tiles.
+        internal const int FirstBatch = 35;
+        bool restPending;
+        internal bool TestRestPending { get { return restPending; } }
+        void Refresh(bool full = false)
         {
-            icons.SetItems(paths.Where(p => Program.DisplayName(p).IndexOf(search.Text ?? "", StringComparison.CurrentCultureIgnoreCase) >= 0));
+            var shown = paths.Where(p => Program.DisplayName(p).IndexOf(search.Text ?? "", StringComparison.CurrentCultureIgnoreCase) >= 0).ToList();
+            if (full || (search.Text ?? "").Length > 0 || shown.Count <= FirstBatch || !restPending) { restPending = false; icons.SetItems(shown); }
+            else icons.SetItems(shown.Take(FirstBatch));
+        }
+        void FinishOpen()
+        {
+            if (!restPending || WasClosed) return;
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate { if (restPending && !WasClosed) Refresh(true); }));
         }
     }
 }
