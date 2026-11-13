@@ -157,7 +157,7 @@ namespace ClearDesk
             var w = OverflowWindow(); if (w != null) return w;
             var chevron = Chevron(tray);
             if (chevron == null) { LastProblem = "找不到“显示隐藏的图标”按钮"; return null; }
-            UiaCom.OverflowHider hider = invisible ? new UiaCom.OverflowHider() : null;
+            // 2.3.5: the flyout is drawn normally (the 2.3.4 empty-region trick is gone)
             try
             {
                 try { ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); }
@@ -167,13 +167,13 @@ namespace ClearDesk
                 {
                     Thread.Sleep(50);
                     w = OverflowWindow();
-                    if (w != null && Buttons(w).Any(IsAppIcon)) { Thread.Sleep(invisible ? 40 : 120); return w; }
+                    if (w != null && Buttons(w).Any(IsAppIcon)) { Thread.Sleep(120); return w; }
                 }
                 LastProblem = "隐藏的图标面板没有出现";
                 if (w != null || OverflowWindow() != null) CloseOverflow(tray);
                 return null;
             }
-            finally { if (hider != null) hider.Dispose(); }
+            finally { }
         }
 
         static void CloseOverflow(AutomationElement tray)
@@ -184,7 +184,7 @@ namespace ClearDesk
                 try { if (chevron != null) ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); } catch { }
                 for (int i = 0; i < 30 && OverflowWindow() != null; i++) Thread.Sleep(50);
             }
-            UiaCom.RestoreWhenClosed(null);          // 2.3.4: give the flyout window its normal shape back once it is closed
+            UiaCom.ResetFlyoutNow();                 // 2.3.5: only heals a leftover empty region (none is made any more)
         }
 
         static AutomationElement Find(AutomationElement root, string name)
@@ -324,7 +324,7 @@ namespace ClearDesk
                 if (ours)
                 {
                     if (mode != 1) { Thread.Sleep(350); CloseOverflow(tray); }
-                    else UiaCom.RestoreWhenClosed(delegate { var t = Tray(); if (t != null) CloseOverflow(t); });
+                    else UiaCom.CloseWhenIdle(delegate { var t = Tray(); if (t != null) CloseOverflow(t); });
                 }
                 return error;
             }

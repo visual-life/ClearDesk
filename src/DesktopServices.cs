@@ -22,6 +22,7 @@ namespace ClearDesk
         public int TaskbarProcessId;
         public string TaskbarPath;
         public bool TopTaskbarHidden;
+        public bool WindowsHidesAtStart;      // 2.3.5: Windows' own "显示桌面图标" switch was already off when the session began (then it stays off afterwards)
     }
 
     public class DesktopServices : IDisposable
@@ -40,6 +41,7 @@ namespace ClearDesk
         {
             recovery = Path.Combine(Program.Data, "recovery-v12-" + Process.GetCurrentProcess().Id + ".json");   // 2.3.1: one file per session (two copies shared one file) and not the file old guards read
             eventProc = WinEvent;
+            try { restore.WindowsHidesAtStart = DesktopIcons.WindowsHides(); } catch { }      // 2.3.5: read once, when the session starts
         }
 
         void EnsureRecovery()
@@ -371,6 +373,7 @@ namespace ClearDesk
             if (h == IntPtr.Zero)
                 return;
             EnsureRecovery();
+            if (!restore.IconsChanged) DesktopIcons.MarkTouched(restore.WindowsHidesAtStart);      // 2.3.5: removed again once the icons are put back (exit or crash guard)
             restore.IconsChanged = true;
             restore.IconHandle = h.ToInt64();
             WriteRecovery();
@@ -382,7 +385,8 @@ namespace ClearDesk
         {
             if (restore.IconsChanged)
             {
-                DesktopIcons.Restore();      // 2.3.1: visible (unless Windows itself has the icons off), never a remembered state
+                DesktopIcons.Restore(restore.WindowsHidesAtStart);      // 2.3.5: visible, and Windows' own switch back on if it was turned off meanwhile (unless it was off when this session began)
+                DesktopIcons.ClearMarker();
                 restore.IconsChanged = false;
                 autoHidden = false;
                 WriteRecovery();
@@ -441,6 +445,7 @@ namespace ClearDesk
             RestoreIcons();
             taskbar.Dispose();
             try { TopTaskbar.Stop(); } catch { }
+            try { UiaCom.HealFlyouts(); } catch { }      // 2.3.5
             if (File.Exists(recovery))
                 File.Delete(recovery);
             if (guardian != null)
@@ -464,15 +469,25 @@ namespace ClearDesk
             }
 
             string path = args[2];
+            try { UiaCom.HealFlyouts(); } catch { }      // 2.3.5: a flyout left with an empty region by 2.3.4 (or anything else)
+            ApplyRestore(path, true);
+        }
+
+        /// <summary>2.3.5: puts back what the session described in <paramref name="path"/> changed (icons, taskbar). Used by the crash guard and, for sessions that died without a guard, at start-up.</summary>
+        internal static void ApplyRestore(string path, bool closeTaskbar)
+        {
             try
             {
                 if (!File.Exists(path))
                     return;
                 var r = new JavaScriptSerializer().Deserialize<RestoreState>(File.ReadAllText(path));
                 if (r.IconsChanged)
-                    DesktopIcons.Restore();      // 2.3.1: not r.IconsVisible
-
-                TaskbarService.CloseOwned(r.TaskbarProcessId, r.TaskbarPath);
+                {
+                    DesktopIcons.Restore(r.WindowsHidesAtStart);
+                    DesktopIcons.ClearMarker();
+                }
+                if (closeTaskbar)
+                    TaskbarService.CloseOwned(r.TaskbarProcessId, r.TaskbarPath);
                 if (r.TopTaskbarHidden)
                     TopTaskbar.Restore();
                 File.Delete(path);
@@ -480,6 +495,28 @@ namespace ClearDesk
             catch
             {
             }
+        }
+
+        /// <summary>2.3.5, at start-up: recovery files of sessions that are gone (killed together with their guard, power loss) are applied and removed. Files of running programs are left alone.</summary>
+        internal static int HealOrphans()
+        {
+            int n = 0;
+            try
+            {
+                int me = Process.GetCurrentProcess().Id;
+                foreach (var f in Directory.GetFiles(Program.Data, "recovery-v12-*.json"))
+                {
+                    int pid;
+                    if (!int.TryParse(Path.GetFileNameWithoutExtension(f).Substring("recovery-v12-".Length), out pid) || pid == me) continue;
+                    bool alive = false;
+                    try { using (var p = Process.GetProcessById(pid)) alive = !p.HasExited && p.ProcessName.StartsWith("ClearDesk", StringComparison.OrdinalIgnoreCase); } catch { }
+                    if (alive) continue;
+                    ApplyRestore(f, false);      // the taskbar helper of a gone session is not ours to close (its process id may belong to something else by now)
+                    n++;
+                }
+            }
+            catch { }
+            return n;
         }
     }
 

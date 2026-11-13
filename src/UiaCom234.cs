@@ -43,7 +43,7 @@ namespace ClearDesk
 
     /// <summary>2.3.4: operating notification-area icons without the taskbar being visible.
     /// ShowContextMenu (UI Automation) makes the shell hand the icon's right click to its program exactly as if the icon had been right-clicked, but needs no mouse and no visible taskbar.
-    /// The "hidden icons" flyout is opened with an empty window region so that nothing is drawn on screen while it is read or used.</summary>
+    /// (2.3.5: the flyout is opened normally and left alone; the 2.3.4 empty-region trick was removed.)</summary>
     internal static class UiaCom
     {
         internal const string OverflowClass = "TopLevelWindowForOverflowXamlIsland";
@@ -128,50 +128,48 @@ namespace ClearDesk
         // ---- the "hidden icons" flyout, kept invisible
         internal static bool RegionIsEmpty(IntPtr h) { RECT r; return h != IntPtr.Zero && GetWindowRgnBox(h, out r) == 1; }       // NULLREGION
         internal static bool HasRegion(IntPtr h) { RECT r; int t = h == IntPtr.Zero ? 0 : GetWindowRgnBox(h, out r); return t == 1 || t == 2 || t == 3; }
-        internal static void MakeInvisible(IntPtr h) { if (h != IntPtr.Zero && !RegionIsEmpty(h)) SetWindowRgn(h, CreateRectRgn(0, 0, 0, 0), true); }
         internal static void MakeVisible(IntPtr h) { if (h != IntPtr.Zero && HasRegion(h)) SetWindowRgn(h, IntPtr.Zero, true); }
 
-        /// <summary>Watches for the flyout window to be shown and gives it an empty region at once (thousands of checks a second for the few hundred milliseconds it takes to open).</summary>
-        internal sealed class OverflowHider : IDisposable
+        // 2.3.5: ClearDesk never changes the shape of the "hidden icons" flyout any more (2.3.4 gave it an empty window region while it read the icons; when ClearDesk was closed or
+        // killed in that moment the region stayed, and the ^ button of the taskbar showed nothing). What is left here only puts a leftover empty region right.
+        internal static string FlyoutClass { get { var c = Environment.GetEnvironmentVariable("CLEARDESK_FLYOUT_CLASS"); return string.IsNullOrEmpty(c) ? OverflowClass : c; } }
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+        delegate bool EnumProc(IntPtr h, IntPtr l);
+
+        /// <summary>Gives every "hidden icons" flyout window that has an EMPTY region (left by 2.3.4) its normal shape back. Safe to call at any time; returns how many it fixed.</summary>
+        internal static int HealFlyouts()
         {
-            volatile bool stop; internal volatile int Hidden; readonly Thread thread;
-            internal OverflowHider()
+            int n = 0;
+            try
             {
-                thread = new Thread(Loop) { IsBackground = true, Name = "ClearDesk tray flyout hider", Priority = ThreadPriority.AboveNormal };
-                thread.Start();
+                string cls = FlyoutClass;
+                EnumWindows((h, l) =>
+                {
+                    var sb = new System.Text.StringBuilder(160); GetClassName(h, sb, 160);
+                    if (sb.ToString() == cls && RegionIsEmpty(h)) { SetWindowRgn(h, IntPtr.Zero, true); n++; }
+                    return true;
+                }, IntPtr.Zero);
             }
-            void Loop()
+            catch { }
+            return n;
+        }
+        internal static void ResetFlyoutNow() { HealFlyouts(); }
+
+        /// <summary>After a right click on a hidden icon the flyout stays open while the program's menu is up; if it is still open after 9 s it is closed (the way it was opened). Changes nothing else.</summary>
+        internal static void CloseWhenIdle(Action closeIt)
+        {
+            new Thread(() =>
             {
                 var sw = Stopwatch.StartNew();
-                while (!stop && sw.ElapsedMilliseconds < 8000)
-                {
-                    IntPtr h = OverflowWindowHandle();
-                    if (h != IntPtr.Zero && IsWindowVisible(h) && !RegionIsEmpty(h)) { MakeInvisible(h); Hidden++; }
-                    Thread.Sleep(1);
-                }
-            }
-            public void Dispose() { stop = true; }
-        }
-
-        /// <summary>Gives the flyout window its normal shape back as soon as it is closed (never while it is open: the user would see it appear blank).</summary>
-        internal static void RestoreWhenClosed(Action closeIt)
-        {
-            var t = new Thread(() =>
-            {
-                var sw = Stopwatch.StartNew(); bool asked = false;
                 while (sw.ElapsedMilliseconds < 20000)
                 {
                     IntPtr h = OverflowWindowHandle();
-                    if (h == IntPtr.Zero) return;
-                    if (!IsWindowVisible(h)) { MakeVisible(h); return; }
-                    if (sw.ElapsedMilliseconds > 9000 && !asked && closeIt != null) { asked = true; try { closeIt(); } catch { } }
+                    if (h == IntPtr.Zero || !IsWindowVisible(h)) return;
+                    if (sw.ElapsedMilliseconds > 9000) { try { if (closeIt != null) closeIt(); } catch { } return; }
                     Thread.Sleep(120);
                 }
-            }) { IsBackground = true, Name = "ClearDesk tray flyout restore" };
-            t.Start();
+            }) { IsBackground = true, Name = "ClearDesk tray flyout close" }.Start();
         }
-
-        /// <summary>Safety net (start, exit): a flyout window left with an empty region would show up blank when the user opens it.</summary>
-        internal static void ResetFlyoutNow() { IntPtr h = OverflowWindowHandle(); if (h != IntPtr.Zero && !IsWindowVisible(h)) MakeVisible(h); }
     }
 }

@@ -212,12 +212,12 @@ namespace ClearDesk
                 if (item.Overflow)
                 {
                     int passes = TrayAccess.VisiblePasses; int shown = 0, samples = 0; bool stop = false;
-                    var sampler = new Thread(() => { var sw = Stopwatch.StartNew(); while (!stop && sw.ElapsedMilliseconds < 20000) { IntPtr h = UiaCom.OverflowWindowHandle(); samples++; if (h != IntPtr.Zero && UiaCom.IsWindowVisible(h) && !UiaCom.RegionIsEmpty(h)) shown++; Thread.Sleep(1); } }) { IsBackground = true };
+                    var sampler = new Thread(() => { var sw = Stopwatch.StartNew(); while (!stop && sw.ElapsedMilliseconds < 20000) { IntPtr h = UiaCom.OverflowWindowHandle(); samples++; if (h != IntPtr.Zero && UiaCom.HasRegion(h)) shown++; Thread.Sleep(1); } }) { IsBackground = true };
                     sampler.Start();
                     var list = await Task.Run(() => TrayAccess.ReadOverflow(true)); stop = true; sampler.Join(2000);
                     check(list.Any(x => x.Name.StartsWith(tip)), "2.3.4 real tray: the hidden icons are read again (" + list.Count + " icons)");
                     check(TrayAccess.VisiblePasses == passes, "2.3.4 real tray: no visible pass is needed once an icon's picture is remembered");
-                    check(shown <= 30, "2.3.4 real tray: while the hidden icons were read the flyout was drawn in at most " + shown + " of " + samples + " 1-ms samples (an empty window region keeps it invisible)");
+                    check(shown == 0, "2.3.5 real tray: while the hidden icons were read the flyout window never had a region of its own (" + shown + " of " + samples + " 1-ms samples) — nothing of the explorer is reshaped any more");
                     bool regionBack = false;
                     for (int i = 0; i < 40 && !regionBack; i++) { await Task.Delay(100); IntPtr h = UiaCom.OverflowWindowHandle(); regionBack = h == IntPtr.Zero || (!UiaCom.IsWindowVisible(h) && !UiaCom.HasRegion(h)); }
                     check(regionBack, "2.3.4 real tray: the flyout window has its normal shape back after it is closed (the user's own opening shows it)");

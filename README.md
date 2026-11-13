@@ -2,7 +2,7 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.3.4**，维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.3.5**，维护者 [visual-life](https://github.com/visual-life)。
 
 <img src="docs/images/overview.gif" width="900" alt="ClearDesk 2.0.2 桌面总览：收纳格、音乐、天气、时钟组件与 Dock">
 
@@ -23,6 +23,7 @@
 
 | 版本 | 日期 | 主要变化 |
 | --- | --- | --- |
+| **2.3.5** | 2026-11-12 | 修复 2.3.4 关闭后「^ 隐藏的图标」面板点了没反应、桌面图标全部消失：不再改资源管理器窗口形状；退出 / 崩溃守护 / 启动都会恢复图标开关和面板；新增 kill -9 测试 |
 | **2.3.4** | 2026-11-12 | 快捷控制的「托盘图标」改成和音量合成器一样的单独一页（← 返回、一行一个图标、可滚动）；托盘图标右键不再弹出任务栏（UI Automation ShowContextMenu）；读取被收起的图标不再闪 |
 | **2.3.3** | 2026-11-12 | Dock 应用提醒闪烁（任务栏按钮闪烁时图标跳动、亮橙色光晕，任务栏完全隐藏时也有效）；快捷控制新增托盘图标区域（含被收起的图标，左键 / 右键菜单 / 双击） |
 | **2.3.2** | 2026-11-11 | 修复 Dock 距屏幕底部距离为 0 时在任务栏隐藏后仍悬空；Dock 实时跟随任务栏 / 工作区 / 缩放 |
@@ -53,7 +54,7 @@
 
 ## 下载
 
-推荐使用 **2.3.4**（2.1.0 起可在 设置 → 关于 里在线更新）：完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹、`taskbar-factory.zip` 和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8；一级右键菜单需要 Windows 11。
+推荐使用 **2.3.5**（2.1.0 起可在 设置 → 关于 里在线更新）：完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹、`taskbar-factory.zip` 和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8；一级右键菜单需要 Windows 11。
 
 发行包见 [Releases](https://github.com/visual-life/ClearDesk/releases)。历史版本：[1.9.1](https://github.com/visual-life/ClearDesk/releases/tag/v1.9.1) · [1.8.2](https://github.com/visual-life/ClearDesk/releases/tag/v1.8.2)。
 

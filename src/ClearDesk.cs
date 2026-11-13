@@ -267,6 +267,9 @@ namespace ClearDesk
             {
                 // Crash-safe: if an earlier session (and its guard) died with the top taskbar hidden, bring it back first.
                 try { TopTaskbar.Restore(); } catch (Exception e) { Log(e); }
+                try { DesktopServices.HealOrphans(); } catch (Exception e) { Log(e); }      // 2.3.5: a session that died without its guard
+                try { UiaCom.HealFlyouts(); } catch (Exception e) { Log(e); }      // 2.3.5: the ^ flyout left with an empty region by 2.3.4
+                try { DesktopIcons.HealAfterLastSession(); } catch (Exception e) { Log(e); }      // 2.3.5: icons changed by the last session and not put back
                 try { if (!S.HideAtStart) DesktopIcons.Heal("启动时"); } catch (Exception e) { Log(e); }      // 2.3.1: left hidden by a crash, an older version or another copy
                 try { Services.Apply(); } catch (Exception e) { Log(e); LogText("启动时应用桌面服务失败（已忽略，ClearDesk 继续运行）：" + e.Message); }   // 2.2.3: an optional service must never stop ClearDesk from starting
                 if (S.HideAtStart)
@@ -737,9 +740,8 @@ namespace ClearDesk
         public static void Quit()
         {
             Quitting = true;
-            Save();
-            foreach (var w in windows.ToArray())
-                w.Close();
+            try { Save(); } catch (Exception e) { Log(e); }
+            try { foreach (var w in windows.ToArray()) w.Close(); } catch (Exception e) { Log(e); }      // 2.3.5: whatever happens above, the exit handler (icons, taskbar, flyout) must run
             App.Shutdown();
         }
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -53,10 +54,99 @@ namespace ClearDesk
             catch (Exception e) { Program.Log(e); return false; }
         }
 
-        /// <summary>Puts back what a session changed: always to <see cref="WantedVisible"/>, never to a state that was read earlier.</summary>
-        internal static void Restore()
+        /// <summary>Turns Windows' own "显示桌面图标" back on (what 桌面右键 → 查看 → 显示桌面图标 does: the same command, sent to the desktop's SHELLDLL_DefView; no keystrokes).
+        /// 2.3.5: ClearDesk shows and hides the icons window itself, Windows keeps its own switch (HideIcons); when the two disagree and the switch is turned off while ClearDesk
+        /// is running, it stayed "off" after ClearDesk closed: the desktop was empty.</summary>
+        internal static Action SwitchOn = TurnOnWindowsIcons;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern IntPtr FindWindowW(string c, string t);
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern IntPtr FindWindowExW(IntPtr p, IntPtr a, string c, string t);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+
+        static IntPtr DefView()
         {
-            try { var h = Handle(); if (h != IntPtr.Zero) Show(h, WantedVisible); } catch (Exception e) { Program.Log(e); }
+            IntPtr dv = FindWindowExW(FindWindowW("Progman", null), IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (dv != IntPtr.Zero) return dv;
+            IntPtr w = IntPtr.Zero;
+            while ((w = FindWindowExW(IntPtr.Zero, w, "WorkerW", null)) != IntPtr.Zero)
+            {
+                dv = FindWindowExW(w, IntPtr.Zero, "SHELLDLL_DefView", null);
+                if (dv != IntPtr.Zero) return dv;
+            }
+            return IntPtr.Zero;
+        }
+
+        static void TurnOnWindowsIcons()
+        {
+            var dv = DefView();
+            if (dv == IntPtr.Zero || !WindowsHides()) return;
+            PostMessage(dv, 0x111, (IntPtr)0x7402, IntPtr.Zero);      // WM_COMMAND: toggle desktop icons (hidden → shown)
+            for (int i = 0; i < 25 && WindowsHides(); i++) System.Threading.Thread.Sleep(100);
+        }
+
+        static DesktopIcons()
+        {
+            // tests only: a file stands in for the desktop ("visible=1;hides=0"), so the crash guard (a separate process) can be tested without touching the real desktop
+            var box = Environment.GetEnvironmentVariable("CLEARDESK_ICONS_SANDBOX");
+            if (string.IsNullOrEmpty(box)) return;
+            Func<string> read = () => { try { return File.ReadAllText(box); } catch { return "visible=1;hides=0"; } };
+            Handle = () => (IntPtr)1;
+            IsVisible = h => read().Contains("visible=1");
+            Show = (h, v) => File.WriteAllText(box, "visible=" + (v ? 1 : 0) + ";hides=" + (read().Contains("hides=1") ? 1 : 0));
+            WindowsHides = () => read().Contains("hides=1");
+            SwitchOn = () => File.WriteAllText(box, "visible=1;hides=0");
+        }
+
+        /// <summary>Puts back what a session changed. <paramref name="startedHidden"/>: Windows' switch was already off when the session began (the user's own choice: it stays off).
+        /// Otherwise the icons are visible afterwards, and if Windows' switch was turned off in the meantime it is turned back on. null = look at the switch now (old behaviour).</summary>
+        internal static void Restore(bool? startedHidden = null)
+        {
+            try
+            {
+                bool keepOff = startedHidden ?? WindowsHides();
+                if (!keepOff && WindowsHides())
+                {
+                    Program.LogText("桌面图标：Windows 的“显示桌面图标”在 ClearDesk 运行期间被关掉了（和 ClearDesk 自己的显示/隐藏不同步）：关闭 ClearDesk 时已重新打开。");
+                    SwitchOn();
+                }
+                var h = Handle(); if (h != IntPtr.Zero) Show(h, !keepOff);
+            }
+            catch (Exception e) { Program.Log(e); }
+        }
+
+        // The state file: written when a session first shows/hides the icons, removed when the session has put them back (normal exit or crash guard).
+        // If it is still there at the next start, neither happened (power loss, a killed guard): see HealAfterLastSession.
+        static string MarkerPath
+        {
+            get
+            {
+                var box = Environment.GetEnvironmentVariable("CLEARDESK_ICONS_SANDBOX");      // tests only
+                return Path.Combine(string.IsNullOrEmpty(box) ? Program.Data : Path.GetDirectoryName(box), "desktop-icons-state.json");
+            }
+        }
+        internal static void MarkTouched(bool startedHidden)
+        {
+            try { Directory.CreateDirectory(Program.Data); File.WriteAllText(MarkerPath, new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "StartedHidden", startedHidden }, { "Touched", true } })); } catch { }
+        }
+        internal static void ClearMarker() { try { if (File.Exists(MarkerPath)) File.Delete(MarkerPath); } catch { } }
+
+        /// <summary>At start: the last session changed the icons and never put them back, and Windows' switch is off now although it was on when that session began → turn it on.</summary>
+        internal static bool HealAfterLastSession()
+        {
+            try
+            {
+                if (!File.Exists(MarkerPath)) return false;
+                var m = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(MarkerPath));
+                ClearMarker();
+                bool touched = m != null && m.ContainsKey("Touched") && Equals(m["Touched"], true);
+                bool startedHidden = m != null && m.ContainsKey("StartedHidden") && Equals(m["StartedHidden"], true);
+                if (!touched || startedHidden || !WindowsHides()) return false;
+                Program.LogText("桌面图标：上一次 ClearDesk 改动过桌面图标，却没有来得及恢复，而 Windows 的“显示桌面图标”现在是关闭的：已重新打开。");
+                SwitchOn();
+                var h = Handle(); if (h != IntPtr.Zero) Show(h, true);
+                return true;
+            }
+            catch (Exception e) { Program.Log(e); return false; }
         }
     }
 
