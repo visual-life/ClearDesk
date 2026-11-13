@@ -175,6 +175,10 @@ namespace ClearDesk
             systemMenu.SubmenuOpened += delegate { FillSystemMenu(); };
             FillSystemMenu();
             ContextMenu.Items.Insert(6, systemMenu);
+            edgeItem = new MenuItem { Header = "贴边隐藏", IsCheckable = true, IsChecked = State.EdgeHide, ToolTip = "拖到屏幕边缘后自动缩进，只露出一条细边；鼠标移上去滑出，移开 0.6 秒后收回" };
+            edgeItem.Click += delegate { SetEdgeHide(edgeItem.IsChecked); };
+            ContextMenu.Items.Insert(7, edgeItem);
+            if (State.EdgeHide) Loaded += delegate { SetEdgeHide(true); };
             Tick(3000, CheckRecycleBin);
             var create = new MenuItem { Header = "新建" };
             create.Items.Add(Item("文件夹", delegate { OrganizerFiles.Prompt(this, State, "新建文件夹", true, Refresh); }));
@@ -354,6 +358,18 @@ namespace ClearDesk
             State.Items = order;
             Program.Save();
             Refresh();
+        }
+
+        MenuItem edgeItem; EdgeHider edge;
+        internal EdgeHider TestEdge { get { return edge; } }
+        internal MenuItem TestEdgeItem { get { return edgeItem; } }
+        /// <summary>2.3.0: 贴边隐藏 on / off for this organizer.</summary>
+        internal void SetEdgeHide(bool on)
+        {
+            State.EdgeHide = on; if (edgeItem != null) edgeItem.IsChecked = on;
+            Program.Save();
+            if (on) { if (edge == null) edge = new EdgeHider(this); edge.Start(); }
+            else if (edge != null) edge.Stop();
         }
 
         ContextMenu ItemMenu(string path)

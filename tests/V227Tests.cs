@@ -13,7 +13,7 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version.StartsWith("2.2."), "2.2.7 version string");
+            check(SettingsWindow.Version.StartsWith("2."), "2.2.7 version string");
             var m = FolderLogic.ListMetrics(255, 470, 7);          // the user's case: 275 x 520 widget, 7 items
             check(m.Icon >= 36 && m.Font >= 18 && m.Row * 7 >= 470 * .7 && m.Row * 7 <= 470, "2.2.7 list size: tall narrow widget with 7 items -> big rows that fill most of the height (" + m + ", " + (m.Row * 7) + " of 470)");
             var many = FolderLogic.ListMetrics(255, 470, 120);

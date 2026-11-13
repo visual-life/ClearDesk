@@ -22,6 +22,7 @@ namespace ClearDesk
         public double X = 20, Y = 20, Width = 520, Height = 360;
         public bool MaterialSelected = false;
         public bool Locked = false, Collapsed = false, List = false, Desktop = false, Enabled = true;
+        public bool EdgeHide = false;      // 2.3.0: 贴边隐藏 (per organizer, off by default)
         public string Material = "liquid";
         public double Scale = 1;
         public double CustomW = 0, CustomH = 0;
@@ -52,6 +53,7 @@ namespace ClearDesk
         public bool AllowUnverifiedTaskbar = false;   // 2.2.4: off by default; lets a TranslucentTB.exe of the shipped version with a valid signature run although its hash differs
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
         public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false, LiveDesktopBlur = false;
+        public bool TopTaskbarFullHide = false;      // 2.3.0: hide the top taskbar completely; only the Windows key / Start shows it
         public List<BoxData> Notes = new List<BoxData>();
         public List<string> ToolWidgets = new List<string>();   // 2.2.0: which of the new widgets are on
         public List<string> LaunchpadItems = new List<string>();
@@ -581,6 +583,13 @@ namespace ClearDesk
             }
         }
 
+        /// <summary>2.3.0: 完全隐藏任务栏 on / off (settings and tray menu).</summary>
+        internal static void SetTaskbarFullHide(bool on)
+        {
+            S.TopTaskbarFullHide = on; Save();
+            if (!Preview && Services != null) Services.Apply();
+        }
+
         static System.Drawing.Icon TrayIcon()
         {
             try
@@ -628,6 +637,10 @@ namespace ClearDesk
                     Services.SetIcons(true, false);
                 }));
             });
+            var fullHide = new Forms.ToolStripMenuItem("完全隐藏任务栏（按 Win 键显示）") { CheckOnClick = false };
+            fullHide.Click += delegate { App.Dispatcher.Invoke(new Action(delegate { SetTaskbarFullHide(!S.TopTaskbarFullHide); })); };
+            m.Opening += delegate { fullHide.Checked = S.TopTaskbarFullHide; };
+            m.Items.Add(fullHide);
             m.Items.Add("修复透明任务栏组件…", null, delegate
             {
                 App.Dispatcher.BeginInvoke(new Action(RepairTaskbarComponent));

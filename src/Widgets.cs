@@ -567,6 +567,10 @@ namespace ClearDesk
         // ---- 2.2.2 position stability (see PositionGuard) ----
         DateTime settleUntil; bool restoring; EventHandler displayChanged; System.Windows.Threading.DispatcherTimer reassert;
         internal int PositionRestores;
+        // 2.3.0 贴边隐藏 support: moves that are not the user's (never saved, never "reasserted")
+        internal void MoveQuietly(double x, double y) { restoring = true; try { Left = x; Top = y; } finally { restoring = false; } }
+        internal bool IsDragging { get { return dragging; } }
+        internal bool TestAtSaved { get { return Math.Abs(Left - State.X) < .5 && Math.Abs(Top - State.Y) < .5; } }
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct PxRect { public int Left, Top, Right, Bottom; }
         [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out PxRect r);
         [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);

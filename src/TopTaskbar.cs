@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -82,7 +82,7 @@ namespace ClearDesk
 
         public static void Sync()
         {
-            bool want = Program.S != null && Program.S.TopTaskbarAutoHide && !Program.Preview;
+            bool want = Program.S != null && (Program.S.TopTaskbarAutoHide || Program.S.TopTaskbarFullHide) && !Program.Preview;
             if (want && timer == null)
             {
                 timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(40) };
@@ -120,15 +120,21 @@ namespace ClearDesk
 
                 POINT p; GetCursorPos(out p);
                 var now = DateTime.UtcNow;
+                bool full = Program.S != null && Program.S.TopTaskbarFullHide;
                 bool shell = ShellSurfaceActive();
+                bool start = full && StartOrSearchActive();
                 if (!revealed)
                 {
                     bool atEdge = false;
-                    foreach (var t in top) { RECT mon; if (Monitor(t, out mon) && p.X >= mon.L && p.X < mon.R && p.Y <= mon.T + EdgePx - 1 && p.Y >= mon.T - 2 && Hot(t, p.X)) atEdge = true; }
-                    foreach (var t in top) RefreshHot(t, false);
+                    if (!full)      // 2.3.0 完全隐藏: the top edge never wakes the taskbar
+                    {
+                        foreach (var t in top) { RECT mon; if (Monitor(t, out mon) && p.X >= mon.L && p.X < mon.R && p.Y <= mon.T + EdgePx - 1 && p.Y >= mon.T - 2 && Hot(t, p.X)) atEdge = true; }
+                        foreach (var t in top) RefreshHot(t, false);
+                    }
                     if (atEdge && !FullscreenForeground()) { if (edgeSince == DateTime.MinValue) edgeSince = now; }
                     else edgeSince = DateTime.MinValue;
-                    if (shell || (edgeSince != DateTime.MinValue && (now - edgeSince).TotalMilliseconds >= DwellMs))
+                    bool dwell = edgeSince != DateTime.MinValue && (now - edgeSince).TotalMilliseconds >= DwellMs;
+                    if (ShouldReveal(full, dwell, shell, start))
                     {
                         revealed = true; edgeSince = DateTime.MinValue; outsideSince = DateTime.MinValue;
                         Slide(top, 0);
@@ -141,9 +147,9 @@ namespace ClearDesk
                     bool inside = false;
                     foreach (var t in top) { RECT r; if (GetWindowRect(t, out r) && p.X >= r.L - 4 && p.X < r.R + 4 && p.Y >= r.T - 4 && p.Y < r.B + 6) inside = true; }
                     if (animating) outsideSince = DateTime.MinValue;
-                    else if (inside || shell || MouseButtonsDown()) outsideSince = DateTime.MinValue;
+                    else if (ShouldStay(full, inside, shell, start, MouseButtonsDown())) outsideSince = DateTime.MinValue;
                     else if (outsideSince == DateTime.MinValue) outsideSince = now;
-                    else if ((now - outsideSince).TotalMilliseconds >= LeaveMs)
+                    else if ((now - outsideSince).TotalMilliseconds >= (full ? FullLeaveMs : LeaveMs))
                     {
                         revealed = false; outsideSince = DateTime.MinValue;
                         Slide(top, -1);
@@ -345,6 +351,29 @@ namespace ClearDesk
             }
             catch { }
             finally { Undpi(old); }
+        }
+
+        // ---- 2.3.0 完全隐藏 (full hide): only Start / search (Win key, Ctrl+Esc) bring the taskbar; the top edge does not.
+        // No keyboard hook: the Start menu itself becoming the foreground window is the signal, so no key is ever intercepted.
+        const int FullLeaveMs = 250;
+        /// <summary>Hidden -> shown? Auto-hide: edge dwell or any shell surface (Start, tray flyout…). Full hide: only Start / search.</summary>
+        internal static bool ShouldReveal(bool full, bool edgeDwell, bool shellSurface, bool startOrSearch)
+        {
+            return full ? startOrSearch : (shellSurface || edgeDwell);
+        }
+        /// <summary>Shown -> keep shown? While Start / search is open, while the pointer is on the taskbar or a button is held,
+        /// and (both modes) while a shell surface opened from the taskbar (tray flyout, jump list) is in front.</summary>
+        internal static bool ShouldStay(bool full, bool pointerInside, bool shellSurface, bool startOrSearch, bool buttonsDown)
+        {
+            return startOrSearch || shellSurface || pointerInside || buttonsDown;
+        }
+        static readonly string[] startProcs = { "startmenuexperiencehost", "searchhost", "searchapp" };
+        static bool StartOrSearchActive()
+        {
+            var fg = GetForegroundWindow();
+            if (fg == IntPtr.Zero) return false;
+            uint pid; GetWindowThreadProcessId(fg, out pid);
+            return Array.IndexOf(startProcs, ProcName(pid)) >= 0;
         }
 
         static readonly string[] shellProcs = { "startmenuexperiencehost", "searchhost", "searchapp", "shellexperiencehost", "shellhost" };

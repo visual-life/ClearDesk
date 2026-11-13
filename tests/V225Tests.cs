@@ -19,7 +19,7 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version.StartsWith("2.2."), "2.2.5 version string (" + SettingsWindow.Version + ")");
+            check(SettingsWindow.Version.StartsWith("2."), "2.2.5 version string (" + SettingsWindow.Version + ")");
             check(ToolWidgets.Kinds.Any(k => k.Key == "folder") && ToolWidgets.IsMulti("folder"), "2.2.5 folder widget: registered as a widget kind with several instances");
             check(DesktopServices.BalloonTitle("TB-04").Contains("被占用") && DesktopServices.BalloonTitle("TB-03").Contains("不一致") && DesktopServices.BalloonTitle("TB-04") != DesktopServices.BalloonTitle("TB-03"), "2.2.5 TB-04: the notice title tells 'in use' from 'content differs'");
             check(DesktopServices.BusyBackoffSeconds.SequenceEqual(new[] { 1, 2, 4, 8, 15, 30 }), "2.2.5 TB-04: silent retry backoff is 1,2,4,8,15,30 s");

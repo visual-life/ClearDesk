@@ -2,7 +2,7 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.2.9**，维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.3.0**，维护者 [visual-life](https://github.com/visual-life)。
 
 <img src="docs/images/overview.gif" width="900" alt="ClearDesk 2.0.2 桌面总览：收纳格、音乐、天气、时钟组件与 Dock">
 
@@ -23,6 +23,7 @@
 
 | 版本 | 日期 | 主要变化 |
 | --- | --- | --- |
+| **2.3.0** | 2026-11-04 | 完全隐藏任务栏（只有 Win 键 / 开始菜单才显示）；桌面收纳贴边隐藏 |
 | **2.2.9** | 2026-11-02 | 文件夹映射紧凑模式（最窄 120 px，标题移到底栏）；启动台可移除 / 恢复 / 固定 / 排序；收纳格、Dock、启动台支持以管理员身份运行 |
 | **2.2.8** | 2026-11-01 | 修复文件夹映射在临界高度拖动时上下抖动（布局反馈循环），滚动条始终隐藏，拖动重算节流 |
 | **2.2.7** | 2026-11-01 | 文件夹映射的图标和文字按组件宽高和项目数自适应放大（16–48 px / 12–22 px），标题跟着缩放，实时生效 |
@@ -48,7 +49,7 @@
 
 ## 下载
 
-推荐使用 **2.2.9**（2.1.0 起可在 设置 → 关于 里在线更新）：完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹、`taskbar-factory.zip` 和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8；一级右键菜单需要 Windows 11。
+推荐使用 **2.3.0**（2.1.0 起可在 设置 → 关于 里在线更新）：完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹、`taskbar-factory.zip` 和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`；已有设置会继续使用。需要 Windows 和 .NET Framework 4.8；一级右键菜单需要 Windows 11。
 
 发行包见 [Releases](https://github.com/visual-life/ClearDesk/releases)。历史版本：[1.9.1](https://github.com/visual-life/ClearDesk/releases/tag/v1.9.1) · [1.8.2](https://github.com/visual-life/ClearDesk/releases/tag/v1.8.2)。
 

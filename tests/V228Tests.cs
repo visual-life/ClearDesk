@@ -13,7 +13,7 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version.StartsWith("2.2."), "2.2.8 version string");
+            check(SettingsWindow.Version.StartsWith("2."), "2.2.8 version string");
             bool mono = true; double last = 0;
             for (int h = 150; h <= 900; h++) { double s = FolderLogic.HeaderScale(275, h); if (s < last) mono = false; last = s; }
             check(mono, "2.2.8 header scale depends on the window size only and is monotonic in height");
