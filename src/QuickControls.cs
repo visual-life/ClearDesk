@@ -424,6 +424,10 @@ namespace ClearDesk
             shortcuts.Add(ShortcutAction("\uE767", "声音", "打开音量合成器", delegate { ShowMixer(true); }));
             shortcuts.Add(Shortcut("\uE774", "可用网络", "ms-availablenetworks:"));
             root.Children.Add(shortcuts.Panel);
+            tray = new TrayPanel233(Dispatcher) { CachePath = System.IO.Path.Combine(Program.Data, "tray-hidden.json"), IconsPath = System.IO.Path.Combine(Program.Data, "tray-icons.json") };
+            tray.Toast = delegate (string g, string m) { Toast(g, m); };
+            tray.ExtraHeightChanged = delegate (double extra) { SetTrayExtra(extra); };
+            root.Children.Add(tray);
             pages = new Grid(); pages.Children.Add(root); root.RenderTransform = mainShift;
             Body.Children.Add(pages);
 
@@ -446,8 +450,11 @@ namespace ClearDesk
                 WatchBluetooth();
             }
             ShowWifi(); ShowBluetooth();
+            if (!Program.Rendering) tray.Start(); else tray.Render(false);
+            Loaded += delegate { tray.PollVisible(); };
             Closed += delegate
             {
+                tray.Stop();
                 if (mixer != null) mixer.Stop();
                 if (signal != null) signal.Stop();
                 if (netHooked) try { Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged -= OnNetwork; } catch { }
@@ -457,6 +464,12 @@ namespace ClearDesk
                 if (btWatchers != null) foreach (var w in btWatchers) try { if (w.Status == Windows.Devices.Enumeration.DeviceWatcherStatus.Started || w.Status == Windows.Devices.Enumeration.DeviceWatcherStatus.EnumerationCompleted) w.Stop(); } catch { }
             };
         }
+
+        TrayPanel233 tray;
+        const double BaseHeight = 285;
+        internal TrayPanel233 Tray { get { return tray; } }
+        void SetTrayExtra(double extra) { double h = BaseHeight + extra; if (Math.Abs(Height - h) > .5) { State.Height = h; Height = h; } }
+        internal void ApplyTraySetting() { tray.ApplySettings(); tray.PollVisible(); }
 
         sealed class UniformGrid3
         {

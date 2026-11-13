@@ -27,6 +27,16 @@ namespace ClearDesk
         internal bool Hidden { get; private set; }
         internal bool Overlapped { get; private set; }
         internal bool PeekedByPointer { get; private set; }
+        DateTime peekUntil = DateTime.MinValue;
+        /// <summary>2.3.3: slide a hidden Dock out for a moment (an app is asking for attention). It goes back by itself when the time is up and nothing else holds it.</summary>
+        internal bool PeekFor(int ms)
+        {
+            if (disposed || dock.WasClosed || !Hidden) return false;
+            peekUntil = DateTime.UtcNow.AddMilliseconds(ms);
+            PeekedByPointer = true; leftAt = DateTime.MaxValue; Apply(false);
+            if (pointer != null && !pointer.IsEnabled) pointer.Start();
+            return true;
+        }
 
         public DockAutoHide(DockWindow window) { dock = window; }
 
@@ -150,7 +160,7 @@ namespace ClearDesk
                 return;
             }
             bool inside = p.X >= area.L - 12 && p.X <= area.R + 12 && p.Y >= area.T - 12 || (dock.ContextMenu != null && dock.ContextMenu.IsOpen);
-            if (inside) { leftAt = DateTime.MaxValue; return; }
+            if (inside || DateTime.UtcNow < peekUntil) { leftAt = DateTime.MaxValue; return; }
             if (leftAt == DateTime.MaxValue) { leftAt = DateTime.UtcNow; return; }
             if ((DateTime.UtcNow - leftAt).TotalMilliseconds > 450)
             {

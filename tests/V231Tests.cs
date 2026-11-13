@@ -212,7 +212,7 @@ namespace ClearDesk
         }
         static string Short(string s) { return (s.Length > 10 ? s.Substring(0, 10) : s) + (s.Length < 3 ? "(U+" + ((int)s[0]).ToString("X4") + ")" : ""); }
 
-        static void Shot(GlassWindow w, string name)
+        internal static void Shot(GlassWindow w, string name)
         {
             string dir = Environment.GetEnvironmentVariable("CLEARDESK_SHOTS");
             if (string.IsNullOrEmpty(dir)) return;

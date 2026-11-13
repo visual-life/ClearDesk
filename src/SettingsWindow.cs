@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.3.2";
+        internal const string Version = "2.3.3";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -197,6 +197,8 @@ namespace ClearDesk
             Range(g,"图标大小","调整 Dock 的基础图标尺寸。",32,72,state.DockSize," px",v => state.DockSize=v);
             Range(g,"距屏幕底部距离","调整 Dock 与屏幕底边的距离，实时生效。0 = 任务栏隐藏时贴着屏幕最底边，任务栏显示在下方时紧贴任务栏上方；自动隐藏和遮挡判断按新位置计算。",0,300,(int)Math.Round(state.DockOffset)," px",v => { state.DockOffset=v; Program.RefreshDockOffset(); });
             Toggle(g,"窗口遮挡时自动隐藏","其他应用的窗口挡住 Dock 时，Dock 向下滑出屏幕；鼠标移到屏幕底部边缘即可唤出，遮挡结束后自动回来。",state.DockAutoHide,v => { state.DockAutoHide=v; Program.RefreshDockAutoHide(); });
+            Toggle(g,"应用提醒闪烁","应用需要你注意时（任务栏按钮闪烁，例如聊天软件来了新消息），Dock 里对应的图标会跳动并亮起橙色光晕，直到你切换到这个应用或它关闭。任务栏被完全隐藏时同样有效。",state.DockAttention,v => { state.DockAttention=v; Program.RefreshDockAttention(); });
+            Toggle(g,"提醒时唤出 Dock","默认关闭。Dock 因窗口遮挡而收起时，有应用提醒就把 Dock 滑出来几秒，再自动收回；关闭时，Dock 下次唤出就会看到闪烁。",state.DockAttentionPeek,v => state.DockAttentionPeek=v);
             Row(g,"桌面启动台","快速查找并打开桌面项目。",ActionButton("打开启动台",Program.Launchpad));
             var launchpad=Program.Widget("launchpad",0,0,880,520);
             Choice(g,"启动台材质","磨砂会实时模糊启动台后方的窗口和桌面；也可在启动台空白处右键切换。",new[]{"玻璃 · 实时清透","磨砂 · 实时模糊"},launchpad.Material=="frosted"?1:0,i => { launchpad.Material=i==1?"frosted":"liquid"; launchpad.MaterialSelected=true; Program.Save(); });
@@ -220,6 +222,8 @@ namespace ClearDesk
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
             Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
             Toggle(g,"快捷控制","音量、WLAN、蓝牙开关与 Windows 设置快捷入口。",state.QuickControls,v=>state.QuickControls=v);
+            Toggle(g,"快捷控制里显示托盘图标","在快捷控制底部列出任务栏右下角的托盘图标（包括被收起的）。左键 = 应用的左键，右键 = 应用自己的菜单（如“退出”）；这样不用任务栏也能管理后台应用。",state.TrayArea,v => { state.TrayArea=v; Program.RefreshTray(); });
+            Choice(g,"托盘图标范围","显示全部托盘图标，或只显示被收起的 / 只显示任务栏上可见的。",new[]{"全部","仅被收起的","仅任务栏上可见的"},state.TrayScope=="hidden"?1:state.TrayScope=="visible"?2:0,i => { state.TrayScope=i==1?"hidden":i==2?"visible":"all"; Program.RefreshTray(); });
             foreach (var tool in ToolWidgets.Kinds) { string kind = tool.Key; Toggle(g,tool.Value,ToolWidgets.Descriptions[kind],ToolWidgets.On(kind),v=>ToolWidgets.Set(kind,v)); }   // 2.2.0
             Toggle(g,"磁吸对齐","拖动组件时吸附屏幕边缘、其他组件的边缘与中线及等距间隔，并显示参考线；按住 Alt 临时关闭。",state.Magnet,v=>state.Magnet=v);
             Toggle(g,"桌面右键新建组件","在桌面右键菜单加入“ClearDesk 新建组件”。未安装 Windows 11 一级菜单时位于“显示更多选项”里。",state.DesktopMenu,v=>{ state.DesktopMenu=v; DesktopMenu.Sync(); });

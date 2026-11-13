@@ -52,6 +52,8 @@ namespace ClearDesk
         static bool animating;
         static DateTime edgeSince = DateTime.MinValue, outsideSince = DateTime.MinValue, lastWork = DateTime.MinValue;
         static readonly Dictionary<uint, string> procNames = new Dictionary<uint, string>();
+        static DateTime holdUntil = DateTime.MinValue;
+        internal static void Hold(int ms) { holdUntil = DateTime.UtcNow.AddMilliseconds(ms); }
         public static bool Active { get { return hidden; } }
         /// <summary>2.3.2: ClearDesk is hiding a tray on this edge right now (the Dock then rests on the physical screen bottom).</summary>
         internal static bool HidesEdge(Edge e) { return hidden && edges.Values.Contains(e); }
@@ -235,8 +237,9 @@ namespace ClearDesk
 
                 POINT p; GetCursorPos(out p);
                 var now = DateTime.UtcNow;
-                bool shell = ShellSurfaceActive();
-                bool start = full && StartOrSearchActive();
+                bool held = now < holdUntil;      // 2.3.3: ClearDesk's 托盘 panel needs the taskbar for a moment (right-click on a visible tray icon)
+                bool shell = ShellSurfaceActive() || held;
+                bool start = full && (StartOrSearchActive() || held);
                 if (!revealed)
                 {
                     bool atEdge = false;

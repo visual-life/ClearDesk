@@ -305,7 +305,7 @@ namespace ClearDesk
             }
         }
 
-        static AppIdentity ProcessIdentity(uint pid)
+        internal static AppIdentity ProcessIdentity(uint pid)
         {
             IntPtr handle = OpenProcess(0x1000, false, pid);
             if (handle == IntPtr.Zero)

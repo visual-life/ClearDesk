@@ -53,6 +53,8 @@ namespace ClearDesk
         public bool AllowUnverifiedTaskbar = false;   // 2.2.4: off by default; lets a TranslucentTB.exe of the shipped version with a valid signature run although its hash differs
         public bool Magnet = true, DesktopMenu = true, ModernMenu = true;
         public bool DockAutoHide = false, QuickControls = false, TopTaskbarAutoHide = false, LiveDesktopBlur = false;
+        public bool DockAttention = true, DockAttentionPeek = false;   // 2.3.3: Dock item pulses while its app flashes for attention; optionally the auto-hidden Dock slides out
+        public bool TrayArea = true; public string TrayScope = "all";   // 2.3.3: 托盘图标 in 快捷控制 (all / hidden / visible)
         public bool HideSearch = false;              // 2.3.1: hide the search box of 收纳格 and 启动台
         public bool TopTaskbarFullHide = false;      // 2.3.0: hide the top taskbar completely; only the Windows key / Start shows it
         public List<BoxData> Notes = new List<BoxData>();
@@ -111,6 +113,8 @@ namespace ClearDesk
             }
         }
         internal static void RefreshDockAutoHide() { foreach (var d in windows.OfType<DockWindow>()) d.RefreshAutoHide(); }
+        internal static void RefreshDockAttention() { foreach (var d in windows.OfType<DockWindow>()) d.ApplyAttention(false); }
+        internal static void RefreshTray() { foreach (var q in windows.OfType<QuickControlWindow>()) q.ApplyTraySetting(); }
         internal static IEnumerable<GlassWindow> OpenWindows { get { return windows.ToArray(); } }
         static DispatcherTimer refresh;
         public static string Config
@@ -153,6 +157,8 @@ namespace ClearDesk
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "--flash-helper") { TestHelpers233.RunFlash(args); return; }       // 2.3.3: test helper — a window that flashes its taskbar button (isolated)
+            if (args.Length > 0 && args[0] == "--tray-helper") { TestHelpers233.RunTray(args); return; }         // 2.3.3: test helper — a program with its own tray icon (isolated)
             if (args.Length > 0 && args[0] == "--guard")
             {
                 DesktopServices.Guard(args);
@@ -278,6 +284,7 @@ namespace ClearDesk
             };
             refresh.Start();
             if (!Preview) { try { OtherInstances.Watch(); } catch (Exception e) { Log(e); } }      // 2.3.1: an older copy started after this one
+            if (!Preview) { try { Attention.Start(); } catch (Exception e) { Log(e); } }      // 2.3.3: taskbar flash → Dock pulse
             try { DesktopKeeper.Start(); } catch (Exception e) { Log(e); }      // 2.2.5: widgets stay on 显示桌面 / Win+D
             MemoryTrim.Start();
             if (!Preview)

@@ -74,7 +74,7 @@ namespace ClearDesk
     {
         internal static Func<List<ProcInfo>> List = WmiList;
         internal static Func<ProcInfo, bool> Kill = KillProcess;
-        static readonly string[] Helper = { "--guard", "--apply-update", "--update-test-server", "--dock-activate", "--mixer-diag", "--battery-diag", "--taskbar-diag", "--dock-diag", "--weather-diag", "--self-test", "--uninstall" };
+        static readonly string[] Helper = { "--guard", "--apply-update", "--update-test-server", "--dock-activate", "--mixer-diag", "--battery-diag", "--taskbar-diag", "--dock-diag", "--weather-diag", "--flash-helper", "--tray-helper", "--self-test", "--uninstall" };
         static readonly string[] Test = { "--preview", "--popup-benchmark", "--perf231", "--render", "--benchmark", "--integration-test", "--regression-test", "--lyrics-test", "--weather-test", "--update-e2e", "--client-lyrics-test" };
 
         internal static bool Has(string cmd, string[] flags)
