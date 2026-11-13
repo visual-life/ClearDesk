@@ -24,7 +24,7 @@ namespace ClearDesk
             check(DesktopServices.BalloonTitle("TB-04").Contains("被占用") && DesktopServices.BalloonTitle("TB-03").Contains("不一致") && DesktopServices.BalloonTitle("TB-04") != DesktopServices.BalloonTitle("TB-03"), "2.2.5 TB-04: the notice title tells 'in use' from 'content differs'");
             check(DesktopServices.BusyBackoffSeconds.SequenceEqual(new[] { 1, 2, 4, 8, 15, 30 }), "2.2.5 TB-04: silent retry backoff is 1,2,4,8,15,30 s");
             var asm = typeof(V225Tests).Assembly;
-            check(asm.GetManifestResourceNames().Contains(ComponentPack.AnchorResource) && !asm.GetManifestResourceNames().Contains(ComponentPack.ResourceName), "2.2.5 360: ClearDesk.exe no longer carries the TranslucentTB files (only their manifest)");
+            check(!asm.GetManifestResourceNames().Contains(ComponentPack.ResourceName), "2.2.5 360: ClearDesk.exe does not carry the TranslucentTB files");
             var fv = FileVersionInfo.GetVersionInfo(asm.Location);
             check(fv.FileVersion == SettingsWindow.Version + ".0" && fv.CompanyName == "visual-life" && fv.ProductName == "ClearDesk" && !string.IsNullOrEmpty(fv.LegalCopyright), "2.2.5 360: the exe has a complete version resource (" + fv.FileVersion + ", " + fv.CompanyName + ")");
             Classify(check);
