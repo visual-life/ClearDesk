@@ -45,7 +45,7 @@ namespace ClearDesk
         double baseW = double.NaN, baseH = double.NaN;
         ScaleTransform scaler;
         Border scaleGrip;
-        internal const double MinScale = .6, MaxScale = 4;      // 2.2.2: MaxScale follows the largest size (MaxSizeFactor) so content and frame keep growing together
+        internal const double MinScale = .3, MaxScale = 4;      // 2.2.2: MaxScale follows the largest size (MaxSizeFactor) so content and frame keep growing together
 
         Border cornerGrip, rightGrip, bottomGrip;
         bool resizing;
@@ -62,7 +62,7 @@ namespace ClearDesk
             get
             {
                 if (!ScalesContent || !HasCustomSize || double.IsNaN(baseW) || double.IsNaN(baseH) || baseW <= 0 || baseH <= 0) return 1;
-                return WidgetLook.ContentScale(CustomW, CustomH, baseW, baseH, MinScale, MaxScale);
+                return WidgetLook.ContentScale(CustomW, CustomH, baseW, baseH, MinContentScale, MaxScale);
             }
         }
         double CustomW { get { return State.CustomW > 0 ? State.CustomW : baseW; } }
@@ -136,8 +136,12 @@ namespace ClearDesk
         }
 
         /// <summary>Smallest size the user can drag the widget to (2.2.9: the folder widget goes much narrower).</summary>
-        protected virtual double MinCustomW { get { return baseW * MinScale; } }
-        protected virtual double MinCustomH { get { return baseH * MinScale; } }
+        // 2.3.1: every widget can be as small as the folder widget (120 x 96); a widget that is smaller by design keeps its own size as the minimum
+        internal const double SmallestW = 120, SmallestH = 96;
+        protected virtual double MinCustomW { get { return Math.Min(baseW, SmallestW); } }
+        protected virtual double MinCustomH { get { return Math.Min(baseH, SmallestH); } }
+        /// <summary>2.3.1: smallest content scale (a widget whose layout re-flows, like 快捷启动, keeps a higher one so its icons stay usable).</summary>
+        protected virtual double MinContentScale { get { return MinScale; } }
         internal double TestMinW { get { return MinCustomW; } }
         internal double TestMinH { get { return MinCustomH; } }
         /// <summary>2.2.9: corner radius of the frame and the clip (content units).</summary>
@@ -167,7 +171,7 @@ namespace ClearDesk
             if (double.IsNaN(baseW) || double.IsNaN(baseH)) { State.Scale = Clamp(scale); return; }
             if (Math.Abs(scale - 1) < .001) { ResetSize(save); return; }
             double f = Clamp(scale);
-            State.Scale = 1; State.CustomW = baseW * f; State.CustomH = baseH * f;
+            State.Scale = 1; State.CustomW = Math.Max(MinCustomW, baseW * f); State.CustomH = Math.Max(MinCustomH, baseH * f);
             ApplySize();
             if (save) Program.Save();
         }
@@ -252,8 +256,8 @@ namespace ClearDesk
             TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
             TextOptions.SetTextRenderingMode(this, TextRenderingMode.Grayscale);
             Title = "ClearDesk · " + title;
-            Width = Math.Max(180, state.Width);
-            Height = Math.Max(100, state.Height);
+            Width = Math.Max(SmallestW, state.Width);
+            Height = Math.Max(60, state.Height);
             Left = state.X;
             Top = state.Y;
             WindowStyle = WindowStyle.None;
@@ -270,7 +274,7 @@ namespace ClearDesk
             if (!PositionGuard.Reachable(new Point(Left, Top), PositionGuard.Screens(null)))
             {
                 // 2.2.4: not the top-left default: the nearest fully visible place (the saved value stays, and comes back with the monitor)
-                var near = PositionGuard.Clamp(new Point(Left, Top), new Size(Math.Max(180, state.Width), Math.Max(100, state.Height)), PositionGuard.WorkAreas(null));
+                var near = PositionGuard.Clamp(new Point(Left, Top), new Size(Math.Max(SmallestW, state.Width), Math.Max(60, state.Height)), PositionGuard.WorkAreas(null));
                 Left = near.X;
                 Top = near.Y;
             }
@@ -423,7 +427,7 @@ namespace ClearDesk
         void ApplyEdges()
         {
             if (!IsLoaded || Layout == null) return;
-            double delta = WidgetLook.Pad(EdgeFactorNow) - WidgetLook.PadBase;
+            double delta = WidgetLook.Pad(EdgeFactorNow) - WidgetLook.PadBase - WidgetLook.CompactEdge(ContentScale);      // 2.3.1: small widgets give up part of the 20-unit edge
             if (Math.Abs(delta - edgeDelta) < .01) return;
             var m = Layout.Margin; double l = m.Left - edgeDelta, t = m.Top - edgeDelta, r = m.Right - edgeDelta, b = m.Bottom - edgeDelta;
             if (l < 10 && t < 10) { edgeDelta = 0; return; }
@@ -973,7 +977,8 @@ namespace ClearDesk
             day.FontFamily = new FontFamily("Segoe Script");
             day.FontStyle = FontStyles.Italic;
             day.HorizontalAlignment = HorizontalAlignment.Center;
-            c.Children.Add(day);
+            day.TextWrapping = TextWrapping.NoWrap;      // 2.3.1: "Wednesday" never breaks into two lines (the second line sat on top of the time); a long day name shrinks instead
+            c.Children.Add(new Viewbox { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, MaxWidth = 330, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Child = day });
             var s = new StackPanel
             {
                 Margin = new Thickness(0, 52, 0, 0)

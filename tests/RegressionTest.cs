@@ -44,7 +44,7 @@ namespace ClearDesk
                 await Task.Delay(1200);
                 if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v227")      // developer shortcut: only the 2.2.6-2.2.8 folder tests
                 {
-                    V230Tests.Rules(Check); V229Tests.Rules(Check); V228Tests.Rules(Check); V227Tests.Rules(Check); V226Tests.Rules(Check); await V230Tests.Run(Check); await V229Tests.Run(Check); await V228Tests.Run(Check); await V227Tests.Run(Check); await V226Tests.Run(Check);
+                    V231Tests.Rules(Check); V230Tests.Rules(Check); V229Tests.Rules(Check); V228Tests.Rules(Check); V227Tests.Rules(Check); V226Tests.Rules(Check); await V231Tests.Run(Check); await V230Tests.Run(Check); await V229Tests.Run(Check); await V228Tests.Run(Check); await V227Tests.Run(Check); await V226Tests.Run(Check);
                     return;
                 }
                 if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v226")      // developer shortcut: only the 2.2.6 tests

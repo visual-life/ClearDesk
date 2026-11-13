@@ -20,6 +20,12 @@ namespace ClearDesk
         readonly TextBox search;
         readonly List<FileSystemWatcher> watchers = new List<FileSystemWatcher>();
         readonly Button foldButton;
+        Button searchButton;
+        internal const double MinW = 120, MinH = 96, CompactW = 240, MinSearchW = 200;      // 2.3.1: as small as the folder widget; below CompactW the header is thin and the tiles smaller
+        MenuItem searchItem;
+        internal bool Compact { get { return Width < CompactW; } }
+        double HeaderH { get { return Compact ? 36 : 58; } }
+        internal void TestToggleSearch() { searchButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
         DispatcherTimer debounce;
         bool searchOpen;
         List<string> all = new List<string>();
@@ -31,6 +37,7 @@ namespace ClearDesk
             chrome.RowDefinitions.Add(new RowDefinition { Height = new GridLength(58) });
             chrome.RowDefinitions.Add(new RowDefinition());
             chrome.RowDefinitions.Add(new RowDefinition { Height = new GridLength(14) });
+            Heading.TextTrimming = TextTrimming.CharacterEllipsis;
             Header.Margin = new Thickness(22, 0, 16, 0);
             Header.LastChildFill = true;
             Header.Children.Clear();
@@ -53,7 +60,7 @@ namespace ClearDesk
                 ToggleCollapsed();
             };
             Header.Children.Add(foldButton);
-            var searchButton = new Button
+            searchButton = new Button
             {
                 Template = FluidUI.IconTemplate(),
                 Content = new Border
@@ -104,15 +111,7 @@ namespace ClearDesk
             Header.Children.Add(searchBox);
             Header.Children.Add(Heading);
             chrome.Children.Add(Header);
-            searchButton.Click += delegate
-            {
-                searchOpen = !searchOpen;
-                searchBox.BeginAnimation(WidthProperty, new DoubleAnimation(searchOpen ? Math.Min(190, Width - 180) : 0, TimeSpan.FromMilliseconds(210)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
-                if (searchOpen)
-                    search.Focus();
-                else
-                    search.Text = "";
-            };
+            searchButton.Click += delegate { ToggleSearch(); };
             search.TextChanged += delegate
             {
                 Filter();
@@ -178,6 +177,9 @@ namespace ClearDesk
             edgeItem = new MenuItem { Header = "贴边隐藏", IsCheckable = true, IsChecked = State.EdgeHide, ToolTip = "拖到屏幕边缘后自动缩进，只露出一条细边；鼠标移上去滑出，移开 0.6 秒后收回" };
             edgeItem.Click += delegate { SetEdgeHide(edgeItem.IsChecked); };
             ContextMenu.Items.Insert(7, edgeItem);
+            searchItem = new MenuItem { Header = "显示搜索", IsCheckable = true, IsChecked = !Program.S.HideSearch, ToolTip = "收纳格和启动台的搜索框；隐藏后标题栏更窄，收纳格可以缩得更小（设置里也有这个开关）" };
+            searchItem.Click += delegate { Program.SetSearchHidden(!searchItem.IsChecked); };
+            ContextMenu.Items.Insert(8, searchItem);
             if (State.EdgeHide) Loaded += delegate { SetEdgeHide(true); };
             Tick(3000, CheckRecycleBin);
             var create = new MenuItem { Header = "新建" };
@@ -196,6 +198,8 @@ namespace ClearDesk
                 string folder = OrganizerFiles.Folder(State); Directory.CreateDirectory(folder);
                 Program.OpenItem(folder);
             }));
+            ApplyChrome();
+            ApplySearch();
             Refresh();
             Watch();
             Closed += delegate
@@ -206,6 +210,58 @@ namespace ClearDesk
                     watcher.Dispose();
             };
         }
+
+        // ---- 2.3.1: small boxes. The header gets thinner, the title shorter, the tiles smaller, the search box out of the way.
+        bool lastCompact; bool chromeApplied;
+        internal bool SearchAvailable { get { return !Program.S.HideSearch && Width >= MinSearchW; } }
+
+        /// <summary>Header height, corner, tile size and search availability from the box's size. Cheap: only acts when something changed.</summary>
+        internal void ApplyChrome()
+        {
+            bool c = Compact;
+            if (!chromeApplied || c != lastCompact)
+            {
+                chromeApplied = true; lastCompact = c;
+                chrome.RowDefinitions[0].Height = new GridLength(HeaderH);
+                chrome.RowDefinitions[2].Height = new GridLength(c ? 8 : 14);
+                Header.Margin = c ? new Thickness(10, 0, 6, 0) : new Thickness(22, 0, 16, 0);
+                Heading.FontSize = c ? 12 : 13;
+                Heading.Text = (c ? "" : "▦   ") + State.Title;
+                items.Margin = c ? new Thickness(6, 0, 6, 0) : new Thickness(14, 0, 14, 0);
+                foldButton.Width = c ? 24 : 28; foldButton.Height = c ? 26 : 30;
+                Frame.CornerRadius = new CornerRadius(c ? 14 : 22);
+                items.SetMetrics(c ? 68 : 96, c ? 76 : 96, c ? 34 : 44);
+            }
+            ApplySearch();
+        }
+
+        /// <summary>Search button / box follow the setting and the width: hidden settings or too narrow = no search, and nothing is filtered.</summary>
+        internal void ApplySearch()
+        {
+            if (searchButton == null) return;
+            bool show = SearchAvailable;
+            searchButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (searchItem != null) searchItem.IsChecked = !Program.S.HideSearch;
+            if (!show && (searchOpen || searchBox.Width > 0 || (search.Text ?? "").Length > 0))
+            {
+                searchOpen = false; searchBox.BeginAnimation(WidthProperty, null); searchBox.Width = 0;
+                if ((search.Text ?? "").Length > 0) search.Text = "";
+            }
+        }
+
+        void ToggleSearch()
+        {
+            if (!SearchAvailable) return;
+            searchOpen = !searchOpen;
+            searchBox.BeginAnimation(WidthProperty, new DoubleAnimation(searchOpen ? Math.Min(190, Width - 180) : 0, TimeSpan.FromMilliseconds(210)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            if (searchOpen)
+                search.Focus();
+            else
+                search.Text = "";
+        }
+        internal bool TestSearchVisible { get { return searchButton != null && searchButton.Visibility == Visibility.Visible; } }
+        internal MenuItem TestSearchItem { get { return searchItem; } }
+        internal double TestHeaderHeight { get { return chrome.RowDefinitions[0].Height.Value; } }
 
         protected override bool HeaderDoubleClickCollapses
         {
@@ -226,7 +282,6 @@ namespace ClearDesk
         {
             if (items == null)
                 return;
-            items.Visibility = State.Collapsed ? Visibility.Collapsed : Visibility.Visible;
             if (foldButton != null)
             {
                 foldButton.Content = State.Collapsed ? "⌄" : "⌃";
@@ -234,13 +289,44 @@ namespace ClearDesk
                 System.Windows.Automation.AutomationProperties.SetName(foldButton, State.Collapsed ? "展开收纳" : "收起收纳");
             }
 
-            double from = ActualHeight > 0 ? ActualHeight : Height;
-            double target = State.Collapsed ? 58 : Math.Max(170, State.Height);
+            double from = foldRunning ? Frame.ActualHeight : (ActualHeight > 0 ? ActualHeight : Height);
+            double target = State.Collapsed ? HeaderH : Math.Max(MinH, State.Height);
             BeginAnimation(HeightProperty, null);
-            Height = target;
-            if (IsLoaded)
-                BeginAnimation(HeightProperty, new DoubleAnimation(from, target, TimeSpan.FromMilliseconds(210)) { FillBehavior = FillBehavior.Stop, EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            EndFold(false);
+            if (!IsLoaded || !AnimateFold || Math.Abs(from - target) < 1)
+            {
+                Height = target;
+                items.Visibility = State.Collapsed ? Visibility.Collapsed : Visibility.Visible;
+                return;
+            }
+            // 2.3.1: no window resize and no layout of the tiles per frame. The window is made big enough for the whole animation ONCE; the tiles keep one fixed size
+            // (so they are not laid out again) and the frame's height is what moves (cheap: a handful of elements). The real height is set when it ends.
+            double big = Math.Max(from, target);
+            items.Visibility = Visibility.Visible;
+            items.VerticalAlignment = VerticalAlignment.Top;
+            items.Height = Math.Max(1, big - HeaderH - chrome.RowDefinitions[2].Height.Value);
+            Frame.VerticalAlignment = VerticalAlignment.Top; Frame.ClipToBounds = true; Frame.Height = from;
+            foldRunning = true;
+            Height = big;
+            var anim = new DoubleAnimation(from, target, TimeSpan.FromMilliseconds(210)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+            anim.Completed += delegate { if (foldRunning) EndFold(true); };
+            Frame.BeginAnimation(HeightProperty, anim);
         }
+
+        bool foldRunning; internal static bool AnimateFold = true;
+        /// <summary>Ends the fold animation (also when a new one starts): back to the normal layout at the final height.</summary>
+        void EndFold(bool final)
+        {
+            if (!foldRunning) return;
+            foldRunning = false;
+            Frame.BeginAnimation(HeightProperty, null);
+            Frame.ClearValue(HeightProperty); Frame.ClearValue(VerticalAlignmentProperty); Frame.ClipToBounds = false;
+            items.ClearValue(HeightProperty); items.ClearValue(VerticalAlignmentProperty);
+            double target = State.Collapsed ? HeaderH : Math.Max(MinH, State.Height);
+            Height = target;
+            items.Visibility = State.Collapsed ? Visibility.Collapsed : Visibility.Visible;
+        }
+        internal bool TestFoldRunning { get { return foldRunning; } }
 
         void AddResizeGrip(HorizontalAlignment ha, VerticalAlignment va, double w, double h, Cursor cursor, bool horizontal, bool vertical)
         {
@@ -276,11 +362,12 @@ namespace ClearDesk
                 }
                 else GuideOverlay.Hide();
                 if (horizontal)
-                    Width = Math.Max(280, Math.Min(Math.Max(280, work.Right - Left), w));
+                    Width = Math.Max(MinW, Math.Min(Math.Max(MinW, work.Right - Left), w));
                 if (vertical)
-                    Height = Math.Max(170, Math.Min(Math.Max(170, work.Bottom - Top), h));
+                    Height = Math.Max(MinH, Math.Min(Math.Max(MinH, work.Bottom - Top), h));
                 State.Width = Width;
                 State.Height = Height;
+                ApplyChrome();
             };
             grip.DragCompleted += delegate
             {
@@ -411,7 +498,7 @@ namespace ClearDesk
         internal void SetTitle(string title)
         {
             State.Title = title;
-            Heading.Text = "▦   " + title;
+            Heading.Text = (Compact ? "" : "▦   ") + title;
             Title = "ClearDesk · " + title;
         }
 

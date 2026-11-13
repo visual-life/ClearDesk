@@ -64,6 +64,7 @@ namespace ClearDesk
         readonly DockPanel urlRow = new DockPanel { Margin = new Thickness(0, 6, 0, 0), Visibility = Visibility.Collapsed };
         internal Action<string> Open = p => { if (LauncherLogic.Classify(p) == "url") Process.Start(new ProcessStartInfo(p) { UseShellExecute = true }); else Program.OpenItem(p); };
         internal LauncherData Data { get { return data; } }
+        protected override double MinContentScale { get { return .55; } }      // 2.3.1: the icons re-flow into rows instead of shrinking with the widget
 
         public LauncherWindow() : base("launcher", "快捷启动", SystemParameters.WorkArea.Left + 720, SystemParameters.WorkArea.Top + 80, 340, 240)
         {

@@ -142,6 +142,15 @@ namespace ClearDesk
             };
         }
 
+        /// <summary>2.3.1: smaller tiles for a small box (cell, row height, icon size) and lay them out again.</summary>
+        public void SetMetrics(double cellMinimum, double rowHeight, double iconSize)
+        {
+            if (Math.Abs(CellMinimum - cellMinimum) < .01 && Math.Abs(RowHeight - rowHeight) < .01 && Math.Abs(IconSize - iconSize) < .01) return;
+            CellMinimum = cellMinimum; RowHeight = rowHeight; IconSize = iconSize;
+            foreach (var t in tiles) Configure(t);
+            Reflow();
+        }
+
         /// <summary>Loads the icon of one item again (a recycle bin that was emptied or filled).</summary>
         public void RefreshIcon(string path)
         {

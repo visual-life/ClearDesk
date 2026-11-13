@@ -39,7 +39,7 @@ namespace ClearDesk
             w.SetCustomSize(bw * 2, bh * 1.5, false);
             check(Math.Abs(w.ContentScale - 1.5) < .01, "text scales by the smaller ratio so content never overflows");
             w.SetCustomSize(1, 1, false);
-            check(Math.Abs(w.ContentScale - GlassWindow.MinScale) < .001, "minimum size is clamped");
+            check(Math.Abs(w.ContentScale - Math.Max(GlassWindow.MinScale, Math.Min(w.TestMinW / w.Width, w.TestMinH / w.Height))) < .02, "minimum size is clamped (2.3.1: down to the smallest size, " + w.TestMinW + " px wide, scale " + w.ContentScale.ToString("0.00") + ")");
             check(w.HasCustomSize, "custom size is stored");
             w.ResetSize(false); w.UpdateLayout();
             check(!w.HasCustomSize && Math.Abs(w.ActualWidth - bw) < 3 && Math.Abs(w.ActualHeight - bh) < 3, "恢复默认大小 returns to the default size");

@@ -40,6 +40,8 @@ namespace ClearDesk
             return Math.Max(1, Math.Min(2, 1 + spare * .5));
         }
         internal const double PadBase = 20;
+        /// <summary>2.3.1: how many of the 20 edge units a shrunk widget (content scale below .75) gives up, at most 10.</summary>
+        internal static double CompactEdge(double contentScale) { return contentScale >= .75 ? 0 : Math.Min(10, (.75 - contentScale) * 40); }
         internal static double Pad(double edgeFactor) { return Math.Round(PadBase * Math.Max(1, Math.Min(2, edgeFactor)) * 2) / 2; }
         /// <summary>Gap used between stacked blocks, from the vertical room a widget has beyond its default.</summary>
         internal static double Gap(double baseGap, double extraHeight, double baseHeight, double maxFactor = 3)

@@ -11,7 +11,7 @@ namespace ClearDesk
     {
         internal static void Rules(Action<bool, string> check)
         {
-            check(SettingsWindow.Version == "2.3.0", "2.3.0 version string");
+            check(new Version(SettingsWindow.Version) >= new Version("2.3.0"), "2.3.0 version string (or later)");
             check(!new Settings().TopTaskbarFullHide && !new BoxData().EdgeHide, "2.3.0 完全隐藏任务栏 and 贴边隐藏 are off by default");
             // full hide: the edge never reveals, tray flyouts never reveal; only Start / search does
             check(!TopTaskbar.ShouldReveal(true, true, false, false), "2.3.0 full hide: the top edge does not wake the taskbar");

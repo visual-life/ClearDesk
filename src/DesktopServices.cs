@@ -38,7 +38,7 @@ namespace ClearDesk
         Animator animator = new Animator();
         public DesktopServices()
         {
-            recovery = Path.Combine(Program.Data, "recovery-v11.json");
+            recovery = Path.Combine(Program.Data, "recovery-v12-" + Process.GetCurrentProcess().Id + ".json");   // 2.3.1: one file per session (two copies shared one file) and not the file old guards read
             eventProc = WinEvent;
         }
 
@@ -46,9 +46,9 @@ namespace ClearDesk
         {
             if (guardian != null || SkipGuardian)
                 return;
-            var h = Native.Icons();
+            var h = DesktopIcons.Handle();
             restore.IconHandle = h.ToInt64();
-            restore.IconsVisible = h == IntPtr.Zero || Native.IsWindowVisible(h);
+            restore.IconsVisible = DesktopIcons.WantedVisible;      // 2.3.1: never the live state (another ClearDesk may have hidden the icons): that put "hidden" back on exit
             WriteRecovery();
             guardian = Process.Start(new ProcessStartInfo(Path.Combine(Program.Base, "ClearDesk.exe"), "--guard " + Process.GetCurrentProcess().Id + " \"" + recovery + "\"") { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
         }
@@ -358,23 +358,23 @@ namespace ClearDesk
 
         public void ToggleIcons()
         {
-            var h = Native.Icons();
+            var h = DesktopIcons.Handle();
             if (h != IntPtr.Zero)
-                SetIcons(!Native.IsWindowVisible(h), false);
+                SetIcons(!DesktopIcons.IsVisible(h), false);
         }
 
         public void SetIcons(bool visible, bool automatic)
         {
             if (Program.Preview)
                 return;
-            var h = Native.Icons();
+            var h = DesktopIcons.Handle();
             if (h == IntPtr.Zero)
                 return;
             EnsureRecovery();
             restore.IconsChanged = true;
             restore.IconHandle = h.ToInt64();
             WriteRecovery();
-            Native.ShowWindow(h, visible ? 5 : 0);
+            DesktopIcons.Show(h, visible);
             autoHidden = !visible && automatic;
         }
 
@@ -382,9 +382,7 @@ namespace ClearDesk
         {
             if (restore.IconsChanged)
             {
-                var h = Native.Icons();
-                if (h != IntPtr.Zero)
-                    Native.ShowWindow(h, restore.IconsVisible ? 5 : 0);
+                DesktopIcons.Restore();      // 2.3.1: visible (unless Windows itself has the icons off), never a remembered state
                 restore.IconsChanged = false;
                 autoHidden = false;
                 WriteRecovery();
@@ -407,8 +405,8 @@ namespace ClearDesk
                     uint idle = unchecked((uint)Environment.TickCount - li.time);
                     if (idle > Program.S.IdleSeconds * 1000)
                     {
-                        var h = Native.Icons();
-                        if (h != IntPtr.Zero && Native.IsWindowVisible(h))
+                        var h = DesktopIcons.Handle();
+                        if (h != IntPtr.Zero && DesktopIcons.IsVisible(h))
                             SetIcons(false, true);
                     }
                     else if (autoHidden && Program.S.RestoreOnInput)
@@ -472,11 +470,7 @@ namespace ClearDesk
                     return;
                 var r = new JavaScriptSerializer().Deserialize<RestoreState>(File.ReadAllText(path));
                 if (r.IconsChanged)
-                {
-                    var h = Native.Icons();
-                    if (h != IntPtr.Zero)
-                        Native.ShowWindow(h, r.IconsVisible ? 5 : 0);
-                }
+                    DesktopIcons.Restore();      // 2.3.1: not r.IconsVisible
 
                 TaskbarService.CloseOwned(r.TaskbarProcessId, r.TaskbarPath);
                 if (r.TopTaskbarHidden)

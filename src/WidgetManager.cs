@@ -126,7 +126,7 @@ namespace ClearDesk
             if (e.Kind == "note" || e.Kind == "box")
             {
                 e.Data.Enabled = visible;
-                if (visible && e.Kind == "box") { e.Data.Collapsed = false; e.Data.Height = Math.Max(170, e.Data.Height); }
+                if (visible && e.Kind == "box") { e.Data.Collapsed = false; e.Data.Height = Math.Max(OrganizerWindow.MinH, e.Data.Height); }
                 Program.Save();
                 if (visible && w == null) Program.AddWindow(e.Kind == "note" ? (GlassWindow)new NoteWindow(e.Data) : new OrganizerWindow(e.Data));
                 if (!visible && w != null) w.Close();
