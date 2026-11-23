@@ -16,7 +16,7 @@ namespace ClearDesk
         static extern bool IsZoomed(IntPtr h);
         readonly DockWindow dock;
         Native.EventProc callback;
-        IntPtr hook, minimizeHook, blocker;
+        IntPtr hook, minimizeHook, blocker, previousForeground;
         DispatcherTimer fallback;
         bool disposed, desktopContext = true, queued;
         public DesktopVisibility(DockWindow window)
@@ -28,14 +28,13 @@ namespace ClearDesk
         {
             callback = delegate
             {
-                if (disposed || queued)
-                    return;
+                if (disposed || queued) return;
                 queued = true;
                 dock.Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(delegate
                 {
                     queued = false;
                     if (!disposed)
-                        Update();
+                        ApplyForeground(Native.GetForegroundWindow(), windowEvent: true);
                 }));
             };
             hook = Native.SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);
@@ -94,10 +93,12 @@ namespace ClearDesk
             ApplyForeground(Native.GetForegroundWindow());
         }
 
-        internal void ApplyForeground(IntPtr foreground)
+        internal void ApplyForeground(IntPtr foreground, bool windowEvent = false)
         {
             if (disposed || dock.WasClosed)
                 return;
+            bool foregroundChanged = previousForeground != foreground;
+            previousForeground = foreground;
             bool? state = Classify(foreground);
             if (state.HasValue)
             {
@@ -130,6 +131,7 @@ namespace ClearDesk
                         popup.Dismiss();
             }
             dock.SyncBackdrop();
+            if (foregroundChanged || windowEvent) dock.RequestBackdropRefresh();
         }
 
         public void Dispose()

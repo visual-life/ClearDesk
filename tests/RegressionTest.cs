@@ -42,9 +42,11 @@ namespace ClearDesk
             try
             {
                 await Task.Delay(1200);
-                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v237")
+                string suite = Environment.GetEnvironmentVariable("CLEARDESK_ONLY");
+                if (suite == "v237" || suite == "v238")
                 {
                     var dock237 = Program.OpenWindows.OfType<DockWindow>().First();
+                    if (suite == "v238") await DockBackdropTests.Run(dock237, Check);
                     V204Tests.Rules(Check); V232Tests.Rules(Check);
                     await SettingsWindowTests.Run(Check);
                     await V204Tests.RunBattery(Check);
@@ -279,6 +281,7 @@ namespace ClearDesk
                 Check(FrostedBackdrop.ActiveCount == 0, "clock backdrop released on close");
                 await DockBehaviorTest.Run(dock, Check);
                 await DockTransitionsTest.Run(dock, Check);
+                await DockBackdropTests.Run(dock, Check);
                 await MusicTests.Run(Check);
                 await MenuThemeTests.Run(organizer, dock, Check);
                 await SettingsWindowTests.Run(Check);

@@ -24,6 +24,7 @@ namespace ClearDesk
         Border plate, separator, marker;
         GlassPane dockGlass;
         DockBackdrop liveBackdrop;
+        DispatcherTimer backdropRefresh;
         DesktopVisibility desktop;
         double cursor = double.NaN, baseSize;
         bool rendering, dragging, rebuilding;
@@ -112,6 +113,7 @@ namespace ClearDesk
                 Attention.Changed -= attentionHandler;
                 if (attentionTimer != null) attentionTimer.Stop();
                 if (rebuildTimer != null) rebuildTimer.Stop();
+                if (backdropRefresh != null) backdropRefresh.Stop();
                 StopFrames();
                 FinishTransition(false);
                 running.Dispose();
@@ -146,6 +148,8 @@ namespace ClearDesk
                 ResetMagnification();
                 CancelDrag();
                 SyncBackdrop();
+                if (IsVisible) RequestBackdropRefresh();
+                else if (backdropRefresh != null) backdropRefresh.Stop();
             };
             Deactivated += delegate
             {
@@ -305,6 +309,26 @@ namespace ClearDesk
             liveBackdrop.Sync(handle, new Rect(topLeft, bottomRight), (bottomRight.X - topLeft.X) / plate.ActualWidth, true);
         }
 
+        internal void RequestBackdropRefresh()
+        {
+            if (!IsLoaded || !IsVisible || WasClosed) return;
+            if (backdropRefresh == null)
+            {
+                backdropRefresh = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(160) };
+                backdropRefresh.Tick += delegate
+                {
+                    backdropRefresh.Stop();
+                    if (!IsVisible || WasClosed || (autoHide != null && autoHide.Hidden)) return;
+                    plate.InvalidateVisual();
+                    SyncBackdrop();
+                    if (liveBackdrop != null && liveBackdrop.RefreshSample()) BackdropRefreshCount++;
+                };
+            }
+            backdropRefresh.Stop();
+            backdropRefresh.Start();
+        }
+
+        internal int BackdropRefreshCount { get; private set; }
         internal IntPtr TestBackdropHandle { get { return liveBackdrop == null ? IntPtr.Zero : liveBackdrop.Handle; } }
         internal bool TestLiveFrost { get { return liveBackdrop != null && liveBackdrop.Enabled; } }
 
