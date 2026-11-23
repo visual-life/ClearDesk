@@ -43,7 +43,36 @@ namespace ClearDesk
             timer.Start();
             bool cancelOnce = Environment.GetCommandLineArgs().Contains("--cancel-close-once");
             window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) { if(cancelOnce) { e.Cancel=true; cancelOnce=false; } };
+            if (Environment.GetCommandLineArgs().Contains("--hidden-fixture"))
+            {
+                window.Content = null;
+                app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                window.Loaded += delegate
+                {
+                    window.Hide();
+                    WriteFixtureHandle(window);
+                };
+            }
+            if (Environment.GetCommandLineArgs().Contains("--stalled-fixture"))
+            {
+                window.ContentRendered += delegate
+                {
+                    WriteFixtureHandle(window);
+                    System.Threading.Thread.Sleep(4500);
+                };
+            }
             app.Run(window);
+        }
+
+        internal static string FixtureHandleFile(int pid)
+        {
+            return Path.Combine(Program.Base, "dock-fixture-" + pid + ".hwnd");
+        }
+
+        static void WriteFixtureHandle(Window window)
+        {
+            File.WriteAllText(FixtureHandleFile(Process.GetCurrentProcess().Id),
+                new WindowInteropHelper(window).Handle.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         internal static async Task Run(DockWindow dock, Action<bool, string> check)

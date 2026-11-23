@@ -15,57 +15,51 @@ namespace ClearDesk
         bool IsWindow(IntPtr h);
         bool IsVisible(IntPtr h);
         bool IsIconic(IntPtr h);
-        /// <summary>WM_SYSCOMMAND (SC_RESTORE / SC_MINIMIZE ...). Unlike ShowWindow this is allowed across integrity levels, so it also works on elevated apps.</summary>
+        bool IsResponsive(IntPtr h);
         bool SysCommand(IntPtr h, int command);
-        bool Show(IntPtr h, int cmd);
-        bool OpenIcon(IntPtr h);
+        bool ShowAsync(IntPtr h, int cmd);
         bool Foreground(IntPtr h);
     }
 
-    /// <summary>
-    /// 2.2.0: Dock restore/minimize that also works for elevated (administrator) apps, apps that hide to the tray and apps whose visible
-    /// window belongs to another process. Root cause of "the Dock cannot bring the window back" (verified live with Sparkle and the League client):
-    /// both run elevated, and a normal process cannot call ShowWindow / ShowWindowAsync on them (UIPI, ERROR_ACCESS_DENIED), so the old
-    /// ShowWindowAsync(SW_RESTORE) + SetForegroundWindow did nothing. WM_SYSCOMMAND SC_RESTORE is let through and activates the window.
-    /// </summary>
+    /// <summary>Uses standard window commands on running, taskbar-visible windows. Run this outside the Dock dispatcher.</summary>
     internal static class DockRestorer
     {
         internal const int SC_MINIMIZE = 0xF020, SC_RESTORE = 0xF120;
-        internal enum Result { Restored, Failed, Gone }
+        internal enum Result { Restored, Failed, Gone, Hidden, NotResponding }
 
-        /// <summary>Restores and activates a window. Blocking (a few hundred ms at most); call it off the UI thread.</summary>
         internal static Result Restore(IntPtr w, IWindowOps ops, Action<int> sleep, List<string> log)
         {
             Action<string> L = s => { if (log != null) log.Add(s); };
             if (!ops.IsWindow(w)) { L("window is gone"); return Result.Gone; }
-            if (!ops.IsVisible(w))
-            {
-                // tray / hidden window: show it (not possible for an elevated app from here; the caller then relaunches)
-                ops.Show(w, 5); L("hidden → SW_SHOW"); sleep(120);
-                if (!ops.IsWindow(w)) return Result.Gone;
-            }
+            if (!ops.IsVisible(w)) { L("hidden: leave activation to the application"); return Result.Hidden; }
+            if (!ops.IsResponsive(w)) { L("window did not respond"); return Result.NotResponding; }
             if (ops.IsIconic(w))
             {
                 ops.SysCommand(w, SC_RESTORE); L("minimized → SC_RESTORE");
-                for (int i = 0; i < 5 && ops.IsIconic(w); i++) sleep(100);
+                for (int i = 0; i < 5 && ops.IsWindow(w) && ops.IsVisible(w) && ops.IsIconic(w); i++) sleep(60);
+                if (!ops.IsWindow(w)) return Result.Gone;
+                if (!ops.IsVisible(w)) return Result.Hidden;
+                if (!ops.IsResponsive(w)) return Result.NotResponding;
                 if (ops.IsIconic(w))
                 {
-                    ops.Show(w, 9); ops.OpenIcon(w); L("still minimized → SW_RESTORE + OpenIcon");
-                    for (int i = 0; i < 3 && ops.IsIconic(w); i++) sleep(100);
+                    ops.ShowAsync(w, 9); L("still minimized → ShowWindowAsync(SW_RESTORE)");
+                    for (int i = 0; i < 5 && ops.IsWindow(w) && ops.IsVisible(w) && ops.IsIconic(w); i++) sleep(60);
                 }
             }
-            ops.Foreground(w); L("foreground");
-            bool ok = ops.IsWindow(w) && ops.IsVisible(w) && !ops.IsIconic(w);
-            L(ok ? "restored" : "could not restore");
-            return ok ? Result.Restored : Result.Failed;
+            if (!ops.IsWindow(w)) return Result.Gone;
+            if (!ops.IsVisible(w)) return Result.Hidden;
+            if (ops.IsIconic(w)) return Result.Failed;
+            bool focused = ops.Foreground(w);
+            L(focused ? "foreground requested" : "Windows did not grant foreground activation");
+            return focused ? Result.Restored : Result.Failed;
         }
 
         /// <summary>Minimizes through WM_SYSCOMMAND (works on elevated windows), falling back to ShowWindow.</summary>
         internal static bool Minimize(IntPtr w, IWindowOps ops)
         {
-            if (!ops.IsWindow(w)) return false;
+            if (!ops.IsWindow(w) || !ops.IsVisible(w) || !ops.IsResponsive(w)) return false;
             if (ops.SysCommand(w, SC_MINIMIZE)) return true;
-            return ops.Show(w, 6);
+            return ops.ShowAsync(w, 6);
         }
 
         /// <summary>A hidden top-level window that looks like an application's main window (what a tray app leaves behind).</summary>
@@ -92,38 +86,49 @@ namespace ClearDesk
     internal sealed class WinOps : IWindowOps
     {
         internal static readonly WinOps Instance = new WinOps();
-        [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
-        [DllImport("user32.dll")] static extern bool OpenIcon(IntPtr h);
-        [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
-        [DllImport("user32.dll")] static extern IntPtr GetLastActivePopup(IntPtr h);
-        [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
+        [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int cmd);
+        [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr h);
+        [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr h);
+        [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint command);
+        [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SendMessageTimeout(IntPtr h, uint message, IntPtr w, IntPtr l, uint flags, uint ms, out IntPtr result);
+        [DllImport("kernel32.dll")] static extern void SetLastError(uint error);
         [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
         public bool IsWindow(IntPtr h) { return Native.IsWindow(h); }
         public bool IsVisible(IntPtr h) { return Native.IsWindowVisible(h); }
         public bool IsIconic(IntPtr h) { return Native.IsIconic(h); }
         public bool SysCommand(IntPtr h, int command) { return Native.PostMessage(h, 0x112, (IntPtr)command, IntPtr.Zero); }
-        public bool Show(IntPtr h, int cmd) { return Native.ShowWindow(h, cmd); }
-        bool IWindowOps.OpenIcon(IntPtr h) { return OpenIcon(h); }
-        /// <summary>SetForegroundWindow, with the input queues attached (no synthetic key presses are sent to anyone).</summary>
+        public bool ShowAsync(IntPtr h, int cmd) { return Native.IsWindowVisible(h) && ShowWindowAsync(h, cmd); }
+        public bool IsResponsive(IntPtr h)
+        {
+            if (!Native.IsWindow(h) || IsHungAppWindow(h) || Native.Class(h) == "Ghost") return false;
+            uint pid;
+            uint thread = Native.GetWindowThreadProcessId(h, out pid);
+            if (thread == 0) return false;
+            if (thread == GetCurrentThreadId()) return true;
+            const uint WM_NULL = 0, SMTO_BLOCK = 1, SMTO_ABORTIFHUNG = 2, SMTO_ERRORONEXIT = 0x20;
+            IntPtr result;
+            SetLastError(0);
+            var sent = SendMessageTimeout(h, WM_NULL, IntPtr.Zero, IntPtr.Zero, SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, 175, out result);
+            // An elevated window may decline the probe. Its asynchronous window commands can still work.
+            return sent != IntPtr.Zero || Marshal.GetLastWin32Error() == 5;
+        }
+
         public bool Foreground(IntPtr h)
         {
-            IntPtr popup = GetLastActivePopup(h);
-            if (popup != IntPtr.Zero && popup != h && Native.IsWindowVisible(popup)) h = popup;
-            uint me = GetCurrentThreadId(), pid, target = Native.GetWindowThreadProcessId(h, out pid), front = Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out pid);
-            bool a1 = false, a2 = false;
-            try
+            if (!IsResponsive(h)) return false;
+            if (!IsWindowEnabled(h))
             {
-                if (front != 0 && front != me) a1 = AttachThreadInput(me, front, true);
-                if (target != 0 && target != me && target != front) a2 = AttachThreadInput(me, target, true);
-                BringWindowToTop(h);
-                return SetForegroundWindow(h);
+                const uint GW_ENABLEDPOPUP = 6;
+                IntPtr dialog = GetWindow(h, GW_ENABLEDPOPUP);
+                uint appPid, dialogPid;
+                Native.GetWindowThreadProcessId(h, out appPid);
+                Native.GetWindowThreadProcessId(dialog, out dialogPid);
+                if (dialog != IntPtr.Zero && dialog != h && appPid != 0 && appPid == dialogPid
+                    && Native.IsWindowVisible(dialog) && IsWindowEnabled(dialog) && IsResponsive(dialog))
+                    h = dialog;
             }
-            finally
-            {
-                if (a1) AttachThreadInput(me, front, false);
-                if (a2) AttachThreadInput(me, target, false);
-            }
+            return Native.IsWindowVisible(h) && SetForegroundWindow(h);
         }
     }
 

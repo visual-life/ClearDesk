@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 
 namespace ClearDesk
@@ -40,6 +42,7 @@ namespace ClearDesk
     {
         public AppIdentity Identity;
         public readonly List<IntPtr> Windows = new List<IntPtr>();
+        public readonly Dictionary<IntPtr, uint> WindowProcesses = new Dictionary<IntPtr, uint>();
         public string Title;
         public IntPtr Preferred;
         public readonly List<string> AncestorExes = new List<string>();   // executables that started this app's process (launcher → client)
@@ -107,12 +110,7 @@ namespace ClearDesk
         static extern bool QueryFullProcessImageName(IntPtr h, int flags, StringBuilder path, ref int length);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         static extern int GetApplicationUserModelId(IntPtr h, ref uint length, StringBuilder id);
-        [DllImport("user32.dll")]
-        static extern bool ShowWindowAsync(IntPtr h, int cmd);
-        [DllImport("user32.dll")]
-        static extern bool SetForegroundWindow(IntPtr h);
-        [DllImport("user32.dll")]
-        static extern IntPtr GetLastActivePopup(IntPtr h);
+        readonly object scanGate = new object();
         readonly Dictionary<string, AppIdentity> pins = new Dictionary<string, AppIdentity>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, DateTime> launches = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, IntPtr> recent = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
@@ -121,12 +119,13 @@ namespace ClearDesk
         readonly Dictionary<IntPtr, WindowMetadata> windowMetadata = new Dictionary<IntPtr, WindowMetadata>();
         static readonly Dictionary<string, string> descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         internal int MetadataReads { get; private set; }
+        internal Func<IntPtr, string> WindowAppIdLookup = ShellIdentity.WindowAppId;
         string WindowIdentity(IntPtr window, uint pid)
         {
             WindowMetadata cached;
             if (windowMetadata.TryGetValue(window, out cached) && cached.Pid == pid && cached.Expires > DateTime.UtcNow) return cached.AppId;
             MetadataReads++;
-            var id = ShellIdentity.WindowAppId(window);
+            var id = WindowAppIdLookup(window);
             windowMetadata[window] = new WindowMetadata { Pid=pid, AppId=id, Expires=DateTime.UtcNow.AddSeconds(10) };
             return id;
         }
@@ -162,8 +161,9 @@ namespace ClearDesk
         }
         readonly uint ownPid = (uint)Process.GetCurrentProcess().Id;
         readonly Dictionary<uint, KeyValuePair<DateTime, List<string>>> ancestors = new Dictionary<uint, KeyValuePair<DateTime, List<string>>>();
-        readonly HashSet<IntPtr> restoring = new HashSet<IntPtr>();
+        readonly HashSet<string> activating = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         internal IWindowOps Ops = WinOps.Instance;
+        internal Func<string, Task> OpenLaunchItem = path => Program.OpenItemAsync(path);
         internal Func<uint, List<string>> AncestorLookup = pid => ProcessTree.AncestorExes(pid, 4);
         List<string> AncestorsOf(uint pid)
         {
@@ -175,14 +175,16 @@ namespace ClearDesk
             return list;
         }
         DispatcherTimer timer;
-        bool disposed;
+        volatile bool disposed;
+        Task scanTask;
         string signature;
         public List<RunningApp> Apps = new List<RunningApp>();
         public event Action Changed;
+        internal event Action<string> ActivationNotice;
         public void Start()
         {
             ForegroundTracker.Start();
-            Refresh();
+            RequestRefresh();
             timer = new DispatcherTimer(DispatcherPriority.Background)
             {
                 Interval = TimeSpan.FromMilliseconds(750)
@@ -190,15 +192,40 @@ namespace ClearDesk
             timer.Tick += delegate
             {
                 if (DateTime.UtcNow >= LaunchpadWindow.AnimationUntil)
-                    Refresh();
+                    RequestRefresh();
             };
             timer.Start();
         }
 
         public void Refresh()
         {
-            if (disposed)
-                return;
+            if (!disposed) ApplySnapshot(Scan());
+        }
+
+        internal Task RequestRefresh()
+        {
+            if (disposed) return Task.CompletedTask;
+            if (scanTask == null || scanTask.IsCompleted) scanTask = ScanAsync();
+            return scanTask;
+        }
+
+        async Task ScanAsync()
+        {
+            try
+            {
+                var snapshot = await Task.Run(Scan);
+                if (!disposed) ApplySnapshot(snapshot);
+            }
+            catch (Exception e) { Program.Log(e); }
+        }
+
+        List<RunningApp> Scan()
+        {
+            lock (scanGate) return ReadWindows();
+        }
+
+        List<RunningApp> ReadWindows()
+        {
             var seen = new HashSet<IntPtr>();
             var groups = new Dictionary<string, RunningApp>(StringComparer.OrdinalIgnoreCase);
             var processIds = new Dictionary<uint, AppIdentity>();
@@ -218,7 +245,7 @@ namespace ClearDesk
                     if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0)
                         return true;
                     string cls = Native.Class(h);
-                    if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")
+                    if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" || cls == "Ghost")
                         return true;
                     uint pid;
                     Native.GetWindowThreadProcessId(h, out pid);
@@ -271,6 +298,7 @@ namespace ClearDesk
                     }
 
                     app.Windows.Add(h);
+                    app.WindowProcesses[h] = pid;
                     foreach (var a in AncestorsOf(pid)) if (!app.AncestorExes.Contains(a)) app.AncestorExes.Add(a);
                     if (h == foreground)
                         recent[key] = h;
@@ -287,8 +315,8 @@ namespace ClearDesk
             foreach (string key in groups.Keys)
                 if (!order.Contains(key))
                     order.Add(key);
-            Apps = order.Select(k => groups[k]).ToList();
-            foreach (var app in Apps)
+            var snapshot = order.Select(k => groups[k]).ToList();
+            foreach (var app in snapshot)
             {
                 IntPtr preferred;
                 app.Preferred = recent.TryGetValue(app.Identity.Key, out preferred) && app.Windows.Contains(preferred) ? preferred : app.Windows[0];
@@ -296,6 +324,12 @@ namespace ClearDesk
 
             foreach (var key in recent.Keys.Where(k => !groups.ContainsKey(k)).ToArray())
                 recent.Remove(key);
+            return snapshot;
+        }
+
+        void ApplySnapshot(List<RunningApp> snapshot)
+        {
+            Apps = snapshot;
             string next = string.Join("|", Apps.Select(a => a.Identity.Key + ":" + string.Join(",", a.Windows.Select(w => w.ToInt64()).OrderBy(w => w).Select(w => w.ToString()))));
             if (next != signature)
             {
@@ -335,11 +369,16 @@ namespace ClearDesk
                     try
                     {
                         string display;
-                        if (!descriptions.TryGetValue(exe, out display))
+                        bool cached;
+                        lock (descriptions) cached = descriptions.TryGetValue(exe, out display);
+                        if (!cached)
                         {
                             display = FileVersionInfo.GetVersionInfo(exe).FileDescription;
-                            if (descriptions.Count >= 256) descriptions.Clear();
-                            descriptions[exe] = display;
+                            lock (descriptions)
+                            {
+                                if (descriptions.Count >= 256) descriptions.Clear();
+                                descriptions[exe] = display;
+                            }
                         }
                         if (!string.IsNullOrWhiteSpace(display)) name = display;
                     }
@@ -365,12 +404,9 @@ namespace ClearDesk
         public AppIdentity ResolvePin(string path)
         {
             AppIdentity id;
-            if (!pins.TryGetValue(path, out id))
-            {
-                id = ShellIdentity.Resolve(path);
-                pins[path] = id;
-            }
-
+            lock (pins) if (pins.TryGetValue(path, out id)) return id;
+            id = ShellIdentity.Resolve(path);
+            lock (pins) pins[path] = id;
             return id;
         }
 
@@ -396,62 +432,88 @@ namespace ClearDesk
             return result;
         }
 
-        public void ActivateOrLaunch(DockEntry entry)
+        public async void ActivateOrLaunch(DockEntry entry)
         {
-            Refresh();
-            var app = FindApp(entry.Identity, null);
-            if (app != null && app.Windows.Count > 0)
+            if (disposed) return;
+            var app = FindApp(entry.Identity, null) ?? entry.Running;
+            string key = app?.Identity.Key ?? entry.Identity.Key ?? entry.PinPath ?? entry.Identity.LaunchPath;
+            if (string.IsNullOrEmpty(key) || !activating.Add(key)) return;
+            IntPtr previous = ForegroundTracker.Last;
+            var ops = Ops;
+            try
             {
-                // Like the taskbar: clicking the app that was in the foreground minimizes it.
-                IntPtr target;
-                if (DockClick.Decide(app.Windows, app.Preferred, ForegroundTracker.Last, Ops.IsIconic, ForegroundTracker.RootOwner, out target) == DockClick.Action.Minimize)
-                    DockRestorer.Minimize(target, Ops);
-                else
-                    RestoreAsync(target, entry);
-                return;
+                var result = await TryWindow(app, previous, ops);
+                if (result == DockRestorer.Result.Gone && !disposed)
+                {
+                    // Metadata discovery can wait on a shell extension. Give it a short chance
+                    // to find a new window, but keep this launch independent of a stalled scan.
+                    await Task.WhenAny(RequestRefresh(), Task.Delay(220));
+                    var latest = FindApp(entry.Identity, null);
+                    if (!disposed && !ReferenceEquals(app, latest)) result = await TryWindow(latest, previous, ops);
+                }
+                if (disposed) return;
+                if (result == DockRestorer.Result.Gone) await Launch(entry);
+                else if (result == DockRestorer.Result.NotResponding) ActivationNotice?.Invoke("应用暂未响应");
             }
-
-            // No visible window: an app minimized to the tray keeps a hidden main window, show that before starting a second copy.
-            var hidden = HiddenWindows(entry.Identity);
-            if (hidden.Count > 0) { RestoreAsync(hidden[0], entry); return; }
-            Launch(entry);
+            catch (Exception e) { Program.Log(e); }
+            finally { activating.Remove(key); }
         }
 
-        void Launch(DockEntry entry)
+        Task Launch(DockEntry entry)
         {
             string path = entry.PinPath ?? entry.Identity.LaunchPath;
             if (string.IsNullOrEmpty(path))
-                return;
+                return Task.CompletedTask;
             string key = entry.Identity.Key ?? path;
             DateTime previous;
             if (launches.TryGetValue(key, out previous) && (DateTime.UtcNow - previous).TotalSeconds < 3)
-                return;
+                return Task.CompletedTask;
             launches[key] = DateTime.UtcNow;
-            Program.OpenItem(path);
+            return OpenLaunchItem(path);
         }
 
-        internal List<string> LastRestoreLog = new List<string>();
-        /// <summary>Restores off the UI thread; when the window cannot be restored (elevated and hidden, or it vanished) the app is started again, which single-instance apps answer by showing their window.</summary>
-        void RestoreAsync(IntPtr window, DockEntry entry)
+        static bool MatchesWindow(RunningApp app, IntPtr window, IWindowOps ops)
         {
-            lock (restoring) { if (!restoring.Add(window)) return; }
-            var dispatcher = System.Windows.Application.Current != null ? System.Windows.Application.Current.Dispatcher : null;
-            System.Threading.Tasks.Task.Run(delegate
+            if (!ops.IsWindow(window) || !ops.IsVisible(window)) return false;
+            uint expected, actual;
+            if (!app.WindowProcesses.TryGetValue(window, out expected)) return true;
+            Native.GetWindowThreadProcessId(window, out actual);
+            if (actual != expected) return false;
+            int cloaked;
+            return DwmGetWindowAttribute(window, 14, out cloaked, 4) != 0 || cloaked == 0;
+        }
+
+        Task<DockRestorer.Result> TryWindow(RunningApp app, IntPtr previous, IWindowOps ops)
+        {
+            if (app == null) return Task.FromResult(DockRestorer.Result.Gone);
+            return Task.Run(delegate
             {
-                var log = new List<string>(); DockRestorer.Result result = DockRestorer.Result.Failed;
-                try { result = DockRestorer.Restore(window, Ops, System.Threading.Thread.Sleep, log); }
-                catch (Exception e) { log.Add("error " + e.Message); }
-                finally { lock (restoring) restoring.Remove(window); }
-                LastRestoreLog = log;
-                if (result == DockRestorer.Result.Restored) return;
-                Action relaunch = delegate { if (!disposed && entry != null) Launch(entry); };
-                if (dispatcher != null) dispatcher.BeginInvoke(relaunch); else relaunch();
+                if (disposed) return DockRestorer.Result.Failed;
+                var windows = app.Windows.Where(window => MatchesWindow(app, window, ops)).ToList();
+                if (windows.Count == 0) return DockRestorer.Result.Gone;
+                IntPtr target;
+                IntPtr preferred = windows.Contains(app.Preferred) ? app.Preferred : windows[0];
+                var action = DockClick.Decide(windows, preferred, previous, ops.IsIconic, ForegroundTracker.RootOwner, out target);
+                var remaining = DockRestorer.Result.Gone;
+                foreach (var window in new[] { target }.Concat(windows).Distinct().Take(4))
+                {
+                    if (disposed) return DockRestorer.Result.Failed;
+                    if (!MatchesWindow(app, window, ops)) continue;
+                    if (!ops.IsResponsive(window)) { remaining = DockRestorer.Result.NotResponding; continue; }
+                    if (window == target && action == DockClick.Action.Minimize)
+                        return DockRestorer.Minimize(window, ops) ? DockRestorer.Result.Restored : DockRestorer.Result.Failed;
+                    var result = DockRestorer.Restore(window, ops, Thread.Sleep, null);
+                    if (result == DockRestorer.Result.Restored || result == DockRestorer.Result.Failed) return result;
+                    if (result == DockRestorer.Result.NotResponding) remaining = result;
+                }
+                // Never relaunch a visible window that is stalled or refused activation.
+                return remaining == DockRestorer.Result.Gone && windows.Any(window => MatchesWindow(app, window, ops))
+                    ? DockRestorer.Result.Failed : remaining;
             });
         }
 
         public int CloseApplication(DockEntry entry)
         {
-            Refresh();
             var app = Apps.FirstOrDefault(a => AppIdentity.Matches(a.Identity, entry.Identity));
             if (app == null) return 0;
             int sent = 0;
@@ -459,22 +521,26 @@ namespace ClearDesk
             {
                 uint pid; Native.GetWindowThreadProcessId(window, out pid);
                 // Recheck identity immediately before sending WM_CLOSE, never terminate a process.
-                var identity = ProcessIdentity(pid);
-                if (pid == ownPid || !Native.IsWindow(window) || identity == null ||
-                    !string.Equals(identity.Exe, app.Identity.Exe, StringComparison.OrdinalIgnoreCase)) continue;
+                if (pid == ownPid || !MatchesWindow(app, window, Ops) ||
+                    !string.Equals(ProcessTree.ExeOf(pid), app.Identity.Exe, StringComparison.OrdinalIgnoreCase)) continue;
                 if (Native.PostMessage(window, 0x10, IntPtr.Zero, IntPtr.Zero)) sent++;
             }
             return sent;
         }
 
-        /// <summary>Restores and activates one window (also elevated ones). Used by the Dock's 已打开的窗口 menu.</summary>
-        internal static void Activate(IntPtr window)
+        internal async void ActivateWindow(RunningApp app, IntPtr window)
         {
-            System.Threading.Tasks.Task.Run(delegate { try { DockRestorer.Restore(window, WinOps.Instance, System.Threading.Thread.Sleep, null); } catch { } });
+            try
+            {
+                var result = await Task.Run(() => !disposed && MatchesWindow(app, window, WinOps.Instance)
+                    ? DockRestorer.Restore(window, WinOps.Instance, Thread.Sleep, null)
+                    : DockRestorer.Result.Gone);
+                if (!disposed && result == DockRestorer.Result.NotResponding) ActivationNotice?.Invoke("应用暂未响应");
+            }
+            catch (Exception e) { Program.Log(e); }
         }
 
         /// <summary>Hidden main windows (tray apps) that belong to this app (same app id or executable).</summary>
-        List<IntPtr> HiddenWindows(AppIdentity id) { return HiddenWindowsFor(id, null); }
         internal List<IntPtr> HiddenWindowsFor(AppIdentity id, string exeFragment)
         {
             var found = new List<IntPtr>(); if (id == null) return found;
@@ -499,14 +565,13 @@ namespace ClearDesk
             return found;
         }
 
-        public string PinTarget(DockEntry entry)
+        public Task<string> PinTargetAsync(DockEntry entry)
         {
-            if (entry.Pinned)
-                return entry.PinPath;
-            var match = Program.DesktopItems().Concat(StartMenuLinks()).FirstOrDefault(path => AppIdentity.Matches(ResolvePin(path), entry.Identity));
-            if (match != null)
-                return match;
-            return entry.Identity.LaunchPath;
+            if (entry.Pinned) return Task.FromResult(entry.PinPath);
+            return Program.RunOnShellThread(() =>
+                Program.DesktopItems().Concat(StartMenuLinks())
+                    .FirstOrDefault(path => AppIdentity.Matches(ResolvePin(path), entry.Identity))
+                ?? entry.Identity.LaunchPath);
         }
 
         static IEnumerable<string> StartMenuLinks()
@@ -535,8 +600,8 @@ namespace ClearDesk
             disposed = true;
             if (timer != null)
                 timer.Stop();
-            windowMetadata.Clear();
             Changed = null;
+            ActivationNotice = null;
         }
     }
 

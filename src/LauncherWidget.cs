@@ -62,7 +62,7 @@ namespace ClearDesk
         readonly TextBlock empty = Label("把文件、文件夹、网址或应用拖到这里；也可点右上角 ＋ 添加。", 12, Dim);
         readonly TextBox urlBox;
         readonly DockPanel urlRow = new DockPanel { Margin = new Thickness(0, 6, 0, 0), Visibility = Visibility.Collapsed };
-        internal Action<string> Open = p => { if (LauncherLogic.Classify(p) == "url") Process.Start(new ProcessStartInfo(p) { UseShellExecute = true }); else Program.OpenItem(p); };
+        internal Action<string> Open = Program.OpenItem;
         internal LauncherData Data { get { return data; } }
         protected override double MinContentScale { get { return .55; } }      // 2.3.1: the icons re-flow into rows instead of shrinking with the widget
 

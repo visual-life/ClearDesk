@@ -4,6 +4,7 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -619,22 +620,65 @@ namespace ClearDesk
             return ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) || ext.Equals(".url", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(p) : Path.GetFileName(p);
         }
 
-        public static void OpenItem(string p)
+        static readonly HashSet<string> openingItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        internal static Action<ProcessStartInfo> StartItemProcess = info => { using (Process.Start(info)) { } };
+
+        public static void OpenItem(string path) { _ = OpenItemAsync(path); }
+
+        internal static async Task OpenItemAsync(string path)
         {
-            if (SystemItems.IsSystem(p)) { if (!SystemItems.Open(p)) MessageBox.Show("无法打开：" + SystemItems.NameOf(p), "ClearDesk"); return; }
+            if (string.IsNullOrWhiteSpace(path)) return;
+            lock (openingItems)
+            {
+                if (openingItems.Contains(path)) return;
+                if (openingItems.Count >= 8) return;
+                openingItems.Add(path);
+            }
+            string error;
             try
             {
-                if (!p.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase) && !File.Exists(p) && !Directory.Exists(p))
-                {
-                    MessageBox.Show("原文件不存在或已移动：\n" + p, "ClearDesk");
-                    return;
-                }
+                error = await RunOnShellThread(() => OpenItemOnShellThread(path));
+            }
+            catch (Exception e) { error = "无法打开：" + e.Message; }
+            finally { lock (openingItems) openingItems.Remove(path); }
+            if (error != null && !Quitting) MessageBox.Show(error, "ClearDesk");
+        }
 
-                Process.Start(new ProcessStartInfo(p) { UseShellExecute = true, WorkingDirectory = p.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) ? Base : Directory.Exists(p) ? p : Path.GetDirectoryName(p) });
+        internal static Task<T> RunOnShellThread<T>(Func<T> action)
+        {
+            var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var worker = new Thread(() =>
+            {
+                try { completion.SetResult(action()); }
+                catch (Exception e) { completion.SetException(e); }
+            }) { IsBackground = true, Name = "ClearDesk Shell" };
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+            return completion.Task;
+        }
+
+        static string OpenItemOnShellThread(string path)
+        {
+            try
+            {
+                var system = SystemItems.OpenCommand(path);
+                bool shell = path.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase);
+                bool url = path.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
+                bool directory = !shell && !url && system == null && Directory.Exists(path);
+                if (system == null && !shell && !url && !directory && !File.Exists(path))
+                    return "原文件不存在或已移动：\n" + path;
+
+                StartItemProcess(system ?? new ProcessStartInfo(path)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = shell || url ? Base : directory ? path : Path.GetDirectoryName(path)
+                });
+                return null;
             }
             catch (Exception e)
             {
-                MessageBox.Show("无法打开：" + e.Message, "ClearDesk");
+                Program.Log(e);
+                return "无法打开：" + e.Message;
             }
         }
 

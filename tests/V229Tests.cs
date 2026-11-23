@@ -115,7 +115,7 @@ namespace ClearDesk
             }
         }
 
-        static async Task Menus(Action<bool, string> check)
+        internal static async Task Menus(Action<bool, string> check)
         {
             string dir = Path.Combine(Path.GetTempPath(), "cd229m-" + Guid.NewGuid().ToString("N").Substring(0, 6)); Directory.CreateDirectory(dir);
             string exe = Path.Combine(dir, "tool.exe"); File.WriteAllText(exe, "x");
@@ -140,6 +140,7 @@ namespace ClearDesk
                     var dm = dock.TestEntryMenu(new DockEntry { PinPath = exe, Identity = new AppIdentity { Exe = exe, Name = "tool" } });
                     check(Has(dm, "以管理员身份运行"), "2.2.9 Dock: 以管理员身份运行 for a program");
                     Get(dm, "以管理员身份运行").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                    for (int i = 0; i < 20 && seen == null; i++) await Task.Delay(50);
                     check(seen != null && seen.Verb == "runas", "2.2.9 Dock: runas (fake)");
                     Program.S.LaunchpadItems.Remove(exe);
                     dm = dock.TestEntryMenu(new DockEntry { PinPath = exe, Identity = new AppIdentity { Exe = exe, Name = "tool" } });

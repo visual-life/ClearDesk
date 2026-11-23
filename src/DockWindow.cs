@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -106,7 +107,13 @@ namespace ClearDesk
             };
             ContextMenu.Items.Insert(0, Item("打开桌面启动台", Program.Launchpad));
             running.Changed += delegate { ScheduleRebuild(); };
-            attentionHandler = delegate { Dispatcher.BeginInvoke(new Action(delegate { if (!WasClosed) { if (!AnyAttentionMatched()) running.Refresh(); ApplyAttention(true); } })); };
+            attentionHandler = delegate { Dispatcher.BeginInvoke(new Action(async delegate
+            {
+                if (WasClosed) return;
+                if (!AnyAttentionMatched()) await running.RequestRefresh();
+                if (!WasClosed) ApplyAttention(true);
+            })); };
+            running.ActivationNotice += message => Toast("\uE783", message);
             Attention.Changed += attentionHandler;
             Closed += delegate
             {
@@ -589,45 +596,90 @@ namespace ClearDesk
         {
             var menu = new ContextMenu();
             string adminPath = entry.PinPath ?? (entry.Identity == null ? null : entry.Identity.Exe);
-            if (AdminRun.Supported(adminPath)) { var admin = Item("以管理员身份运行", delegate { AdminRun.Run(adminPath); }); admin.Tag = "admin"; menu.Items.Add(admin); menu.Items.Add(new Separator()); }
-            menu.Items.Add(Item(entry.Pinned ? "取消固定" : "固定到 Dock", delegate
+            if (AdminRun.MayBeSupported(adminPath))
+            {
+                var admin = Item("以管理员身份运行", async delegate
+                {
+                    try { await Program.RunOnShellThread(() => AdminRun.Run(adminPath)); }
+                    catch (Exception e) { Program.Log(e); }
+                });
+                admin.Tag = "admin";
+                admin.IsEnabled = false;
+                var separator = new Separator();
+                menu.Items.Add(admin);
+                menu.Items.Add(separator);
+                Task<bool> eligibility = null;
+                menu.Opened += async delegate
+                {
+                    try
+                    {
+                        if (eligibility == null) eligibility = Program.RunOnShellThread(() => AdminRun.Supported(adminPath));
+                        bool supported = await eligibility;
+                        admin.IsEnabled = supported;
+                        admin.Visibility = separator.Visibility = supported ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                    catch (Exception e) { Program.Log(e); }
+                };
+            }
+            menu.Items.Add(Item(entry.Pinned ? "取消固定" : "固定到 Dock", async delegate
             {
                 if (entry.Pinned)
                     Program.S.Pins.Remove(entry.PinPath);
                 else
                 {
-                    string target = running.PinTarget(entry);
-                    if (!string.IsNullOrEmpty(target) && !Program.S.Pins.Contains(target))
+                    string target;
+                    try { target = await running.PinTargetAsync(entry); }
+                    catch (Exception e) { Program.Log(e); return; }
+                    if (WasClosed) return;
+                    if (!string.IsNullOrEmpty(target) && !Program.S.Pins.Contains(target) && Program.S.Pins.Count < 32)
                         Program.S.Pins.Add(target);
                 }
 
                 Program.Save();
                 Rebuild();
             }));
-            string padPath = entry.PinPath; if (padPath == null && running != null) try { padPath = running.PinTarget(entry); } catch { }
-            if (!string.IsNullOrEmpty(padPath) && !LaunchpadStore.IsPinned(padPath)) menu.Items.Add(Item("固定到启动台", delegate { LaunchpadStore.Pin(new[] { padPath }); }));
-            menu.Items.Add(Item("打开所在位置", delegate
+            string padPath = entry.PinPath ?? entry.Identity.LaunchPath;
+            if (!string.IsNullOrEmpty(padPath) && !LaunchpadStore.IsPinned(padPath)) menu.Items.Add(Item("固定到启动台", async delegate
+            {
+                try
+                {
+                    string target = await running.PinTargetAsync(entry);
+                    if (!WasClosed && !string.IsNullOrEmpty(target)) LaunchpadStore.Pin(new[] { target });
+                }
+                catch (Exception e) { Program.Log(e); }
+            }));
+            menu.Items.Add(Item("打开所在位置", async delegate
             {
                 string path = entry.PinPath ?? entry.Identity.Exe;
                 if (string.IsNullOrEmpty(path) || path.StartsWith("shell:", StringComparison.OrdinalIgnoreCase))
                     return;
                 try
                 {
-                    Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true });
+                    await Program.RunOnShellThread(() =>
+                    {
+                        using (Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true })) { }
+                        return true;
+                    });
                 }
                 catch (Exception e)
                 {
                     Program.Log(e);
                 }
             }));
-            var close = Item("关闭应用", delegate
+            var close = Item("关闭应用", async delegate
             {
-                if (running.CloseApplication(entry) == 0)
+                await Task.WhenAny(running.RequestRefresh(), Task.Delay(220));
+                if (!WasClosed && running.CloseApplication(entry) == 0)
                     MessageBox.Show("未找到可关闭的窗口，或应用未接受关闭请求。", "ClearDesk");
             });
             close.ToolTip = "正常关闭该应用的所有窗口；未保存内容由应用自行提示。";
             close.IsEnabled = entry.IsRunning;
-            menu.Opened += delegate { running.Refresh(); close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity)); };
+            menu.Opened += async delegate
+            {
+                close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity));
+                await running.RequestRefresh();
+                if (menu.IsOpen && !WasClosed) close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity));
+            };
             if (entry.Running != null && entry.Running.Windows.Count > 1)
             {
                 var windows = new MenuItem
@@ -639,7 +691,7 @@ namespace ClearDesk
                     IntPtr h = handle;
                     windows.Items.Add(Item(WindowTitle(h), delegate
                     {
-                        RunningApps.Activate(h);
+                        running.ActivateWindow(entry.Running, h);
                     }));
                 }
 

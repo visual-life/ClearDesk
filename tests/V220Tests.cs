@@ -16,11 +16,12 @@ namespace ClearDesk
         // A window that behaves like a foreign one: when Elevated, ShowWindow / OpenIcon are refused (UIPI) while WM_SYSCOMMAND still works.
         sealed class FakeWindow : IWindowOps
         {
-            public bool Exists = true, Visible = true, Iconic = true, Elevated, SysCommandWorks = true, Foregrounded;
+            public bool Exists = true, Visible = true, Iconic = true, Responsive = true, Elevated, SysCommandWorks = true, Foregrounded, FocusAllowed = true;
             public List<string> Calls = new List<string>();
             public bool IsWindow(IntPtr h) { return Exists; }
             public bool IsVisible(IntPtr h) { return Visible; }
             public bool IsIconic(IntPtr h) { return Iconic; }
+            public bool IsResponsive(IntPtr h) { return Responsive; }
             public bool SysCommand(IntPtr h, int c)
             {
                 Calls.Add("sys:" + c.ToString("X")); if (!SysCommandWorks) return false;
@@ -28,18 +29,17 @@ namespace ClearDesk
                 if (c == DockRestorer.SC_MINIMIZE) Iconic = true;
                 return true;
             }
-            public bool Show(IntPtr h, int cmd)
+            public bool ShowAsync(IntPtr h, int cmd)
             {
                 Calls.Add("show:" + cmd); if (Elevated) return false;
                 if (cmd == 5) Visible = true; if (cmd == 9) Iconic = false; if (cmd == 6) Iconic = true; return true;
             }
-            public bool OpenIcon(IntPtr h) { Calls.Add("openicon"); if (Elevated) return false; Iconic = false; return true; }
-            public bool Foreground(IntPtr h) { Calls.Add("fg"); Foregrounded = true; return true; }
+            public bool Foreground(IntPtr h) { Calls.Add("fg"); Foregrounded = FocusAllowed; return FocusAllowed; }
         }
         static readonly IntPtr W = (IntPtr)0x1234;
         static void NoSleep(int ms) { }
 
-        internal static void Rules(Action<bool, string> check)
+        internal static void DockRules(Action<bool, string> check)
         {
             // ---- Dock restore ----
             var f = new FakeWindow { Elevated = true };
@@ -50,25 +50,29 @@ namespace ClearDesk
 
             f = new FakeWindow { Elevated = false, SysCommandWorks = false };
             r = DockRestorer.Restore(W, f, NoSleep, null);
-            check(r == DockRestorer.Result.Restored && f.Calls.Contains("show:9") && f.Foregrounded, "dock restore: when the app ignores SC_RESTORE the ShowWindow / OpenIcon fallback restores it");
+            check(r == DockRestorer.Result.Restored && f.Calls.Contains("show:9") && f.Foregrounded, "dock restore: when the app ignores SC_RESTORE the asynchronous fallback restores it");
 
             f = new FakeWindow { Elevated = true, SysCommandWorks = false };
             r = DockRestorer.Restore(W, f, NoSleep, null);
-            check(r == DockRestorer.Result.Failed, "dock restore: when nothing works the result is Failed (the Dock then starts the app again)");
+            check(r == DockRestorer.Result.Failed && !f.Foregrounded, "dock restore: a still-minimized window is left running after both commands fail");
 
             f = new FakeWindow { Exists = false };
             check(DockRestorer.Restore(W, f, NoSleep, null) == DockRestorer.Result.Gone, "dock restore: a window that vanished reports Gone");
 
-            f = new FakeWindow { Visible = false, Iconic = false };
-            r = DockRestorer.Restore(W, f, NoSleep, null);
-            check(r == DockRestorer.Result.Restored && f.Visible && f.Calls.First() == "show:5", "dock restore: a tray app's hidden window is shown again");
-            f = new FakeWindow { Visible = false, Iconic = false, Elevated = true };
-            check(DockRestorer.Restore(W, f, NoSleep, null) == DockRestorer.Result.Failed, "dock restore: an elevated tray app cannot be shown from here → Failed so that the Dock relaunches it");
+            f = new FakeWindow { Visible = false, Iconic = true };
+            check(DockRestorer.Restore(W, f, NoSleep, null) == DockRestorer.Result.Hidden && f.Calls.Count == 0,
+                "dock restore: hidden tray and helper windows receive no window commands");
+            f = new FakeWindow { Iconic = false, Responsive = false };
+            check(DockRestorer.Restore(W, f, NoSleep, null) == DockRestorer.Result.NotResponding && !DockRestorer.Minimize(W, f) && f.Calls.Count == 0,
+                "dock restore: an unresponsive app receives no restore, focus or minimize commands");
+            f = new FakeWindow { Iconic = false, FocusAllowed = false };
+            check(DockRestorer.Restore(W, f, NoSleep, null) == DockRestorer.Result.Failed && f.Calls.SequenceEqual(new[] { "fg" }),
+                "dock restore: foreground refusal is reported after a single standard focus request");
 
             f = new FakeWindow { Iconic = false, Elevated = true };
             check(DockRestorer.Minimize(W, f) && f.Iconic && f.Calls[0] == "sys:F020", "dock minimize: elevated windows are minimized through SC_MINIMIZE");
             f = new FakeWindow { Iconic = false, SysCommandWorks = false };
-            check(DockRestorer.Minimize(W, f) && f.Calls.Contains("show:6") && f.Iconic, "dock minimize: falls back to ShowWindow");
+            check(DockRestorer.Minimize(W, f) && f.Calls.Contains("show:6") && f.Iconic, "dock minimize: falls back to ShowWindowAsync");
 
             // ---- hidden main window detection ----
             const long Caption = 0xC00000 | 0x80000 | 0x20000;
@@ -86,6 +90,11 @@ namespace ClearDesk
             check(!DockRestorer.AncestorMatch(@"c:\windows\system32\cmd.exe", new[] { @"c:\windows\system32\cmd.exe" }), "launcher match: a pinned cmd.exe does not claim programs started from a console");
             check(!DockRestorer.AncestorMatch(riot, new[] { ux }) && !DockRestorer.AncestorMatch(null, new[] { riot }), "launcher match: unrelated processes do not match");
 
+        }
+
+        internal static void Rules(Action<bool, string> check)
+        {
+            DockRules(check);
             V220WidgetTests.Rules(check);
             V221Tests.Rules(check);
             V222Tests.Rules(check);

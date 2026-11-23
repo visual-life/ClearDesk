@@ -43,10 +43,17 @@ namespace ClearDesk
             {
                 await Task.Delay(1200);
                 string suite = Environment.GetEnvironmentVariable("CLEARDESK_ONLY");
-                if (suite == "v237" || suite == "v238" || suite == "v239")
+                if (suite == "v237" || suite == "v238" || suite == "v239" || suite == "v240")
                 {
                     var dock237 = Program.OpenWindows.OfType<DockWindow>().First();
-                    if (suite == "v239")
+                    if (suite == "v240")
+                    {
+                        V220Tests.DockRules(Check);
+                        await DockLaunchSafetyTests.Run(Check);
+                        await DockBehaviorTest.Run(dock237, Check);
+                        await V229Tests.Menus(Check);
+                    }
+                    if (suite == "v239" || suite == "v240")
                     {
                         TaskbarWorkAreaTests.Rules(Check);
                         await TaskbarWorkAreaTests.Run(Check);

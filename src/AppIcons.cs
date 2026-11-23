@@ -221,9 +221,24 @@ namespace ClearDesk
         internal static string DisplayName(string aumid)
         {
             if (string.IsNullOrEmpty(aumid)) return null;
-            string known; if (names.TryGetValue(aumid, out known)) return known;
+            string known;
+            lock (names) if (names.TryGetValue(aumid, out known)) return known;
             object o = null;
-            try { o = Item(aumid, typeof(IShellItem).GUID); var item = o as IShellItem; string name; if (item != null && item.GetDisplayName(0, out name) == 0) { if (names.Count > 256) names.Clear(); names[aumid] = name; return name; } }
+            try
+            {
+                o = Item(aumid, typeof(IShellItem).GUID);
+                var item = o as IShellItem;
+                string name;
+                if (item != null && item.GetDisplayName(0, out name) == 0)
+                {
+                    lock (names)
+                    {
+                        if (names.Count > 256) names.Clear();
+                        names[aumid] = name;
+                    }
+                    return name;
+                }
+            }
             catch { }
             finally { if (o != null && Marshal.IsComObject(o)) Marshal.ReleaseComObject(o); }
             return null;

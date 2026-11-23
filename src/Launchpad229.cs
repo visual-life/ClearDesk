@@ -82,9 +82,16 @@ namespace ClearDesk
         internal static Func<ProcessStartInfo, Process> Starter = psi => Process.Start(psi);
         internal static Func<string, string> ShortcutTarget = ReadShortcut;
 
-        internal static bool Supported(string path)
+        internal static bool MayBeSupported(string path)
         {
             if (string.IsNullOrEmpty(path) || path.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) || SystemItems.IsSystem(path)) return false;
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            return ext == ".lnk" || Runnable.Contains(ext);
+        }
+
+        internal static bool Supported(string path)
+        {
+            if (!MayBeSupported(path)) return false;
             if (Directory.Exists(path)) return false;
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (Runnable.Contains(ext)) return File.Exists(path);
