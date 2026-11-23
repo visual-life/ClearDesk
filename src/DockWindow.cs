@@ -129,6 +129,7 @@ namespace ClearDesk
             {
                 var hs = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle);
                 if (hs != null) hs.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) => { if (m == 0x47 && liveBackdrop != null) liveBackdrop.Reorder(h); return IntPtr.Zero; });
+                Rebuild();
                 UpdateBackdrop();
                 if (!Program.Rendering)
                 {
@@ -201,21 +202,35 @@ namespace ClearDesk
         }
 
         DockAutoHide autoHide;
+        protected override bool UsesSavedPosition { get { return false; } }
+        protected override void RestorePosition() { ApplyOffset(); }
         internal double ShownTop { get; private set; }
+        internal double HiddenTop { get; private set; }
         internal DockAutoHide AutoHide { get { return autoHide; } }
         internal DockAutoHide TestAutoHide() { if (autoHide == null) autoHide = new DockAutoHide(this); return autoHide; }
         internal void ApplyOffset()
         {
             if (WasClosed) return;
-            var g = Geometry(); geometrySig = DockPlacement.Signature(g);
-            ShownTop = DockPlacement.Top(g, Height, Program.S.DockOffset);
-            if (autoHide == null || !autoHide.Hidden) { BeginAnimation(TopProperty, null); Top = ShownTop; }
+            Place(Geometry());
             if (autoHide != null) autoHide.Evaluate();
+        }
+
+        void Place(DockGeometry geometry)
+        {
+            Left = DockPlacement.CenteredLeft(geometry, Width);
+            ShownTop = DockPlacement.Top(geometry, Height, Program.S.DockOffset);
+            double previousHiddenTop = HiddenTop;
+            HiddenTop = DockPlacement.MonitorBottomDip(geometry) + 4;
+            bool hidden = autoHide != null && autoHide.Hidden;
+            double target = hidden ? HiddenTop : ShownTop;
+            if (hidden && Math.Abs(previousHiddenTop - HiddenTop) < .5) return;
+            if (Math.Abs(Top - target) < .5) return;
+            BeginAnimation(TopProperty, null);
+            Top = target;
         }
 
         // 2.3.2: the Dock rests on the physical bottom of the screen (taskbar hidden / on another edge) or on top of the visible bottom taskbar - never on a stale work area.
         internal DockGeometry Geometry() { return DockPlacement.Provider(this); }
-        internal double HiddenTop { get { return DockPlacement.MonitorBottomDip(Geometry()) + 4; } }
         string geometrySig = "";
         DispatcherTimer geometryTimer;
         void WatchGeometry()
@@ -225,9 +240,17 @@ namespace ClearDesk
             geometryTimer.Tick += delegate
             {
                 if (WasClosed) return;
-                if (DockPlacement.Signature(Geometry()) == geometrySig) return;
-                GeometryChanges++;
-                if (!rebuilding && !transitioning) Rebuild(); else ApplyOffset();      // Rebuild sizes the Dock to the work area and calls ApplyOffset's placement
+                var geometry = Geometry();
+                if (DockPlacement.Signature(geometry) != geometrySig)
+                {
+                    GeometryChanges++;
+                    Rebuild();
+                    return;
+                }
+                bool driftedHorizontally = Math.Abs(Left - DockPlacement.CenteredLeft(geometry, Width)) > .75;
+                bool driftedVertically = (autoHide == null || !autoHide.Hidden)
+                    && !DependencyPropertyHelper.GetValueSource(this, TopProperty).IsAnimated && Math.Abs(Top - ShownTop) > .75;
+                if (driftedHorizontally || driftedVertically) ApplyOffset();
             };
             geometryTimer.Start();
             Closed += delegate { geometryTimer.Stop(); };
@@ -389,9 +412,7 @@ namespace ClearDesk
                 Width = animate ? Math.Max(previousWidth, targetWidth) : targetWidth;
                 Height = animate ? Math.Max(previousHeight, targetHeight) : targetHeight;
                 State.Height = targetHeight;
-                Left = wa.Left + (wa.Width - Width) / 2;
-                ShownTop = DockPlacement.Top(geo, Height, Program.S.DockOffset);
-                if (autoHide == null || !autoHide.Hidden) Top = ShownTop;
+                Place(geo);
                 AddIcon(null);
                 foreach (var entry in entries)
                     AddIcon(entry);

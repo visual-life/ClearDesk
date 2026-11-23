@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.3.6";
+        internal const string Version = "2.3.7";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();
@@ -65,13 +65,13 @@ namespace ClearDesk
             var top = new StackPanel { Margin = new Thickness(24,47,24,24) };
             var brand = new DockPanel(); var icon = new Image { Source = AppBrand.Icon, Width = 36, Height = 36, Margin = new Thickness(0,0,12,0) }; brand.Children.Add(icon);
             var brandText = new StackPanel(); var name = Label("ClearDesk", 22, "#152139"); name.FontWeight = FontWeights.SemiBold; brandText.Children.Add(name); brandText.Children.Add(Label("桌面美化", 11, "#7D889B")); brand.Children.Add(brandText); top.Children.Add(brand);
-            var searchBox = new Grid { Margin = new Thickness(0,28,0,0) };
-            search.Height = 40; search.Padding = new Thickness(30,8,8,8); AutomationProperties.SetName(search, "搜索设置"); search.ToolTip = "搜索所有设置";
-            searchBox.Children.Add(search);
-            var magnifier = Label("\uE721", 13, "#8390A6"); magnifier.FontFamily = new FontFamily("Segoe MDL2 Assets"); magnifier.Margin = new Thickness(10,0,0,0); magnifier.IsHitTestVisible = false; searchBox.Children.Add(magnifier);
-            var placeholder = Label("搜索设置", 12, "#8C97A9"); placeholder.Margin = new Thickness(30,0,0,0); placeholder.IsHitTestVisible = false; searchBox.Children.Add(placeholder);
-            search.TextChanged += delegate { placeholder.Visibility = search.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; Render(); };
-            top.Children.Add(searchBox); sidebar.Children.Add(top);
+            search.Style = (Style)Resources["SettingsSearch"];
+            search.Margin = new Thickness(0, 28, 0, 0);
+            search.ToolTip = "搜索所有设置";
+            AutomationProperties.SetName(search, "搜索设置");
+            WindowChrome.SetIsHitTestVisibleInChrome(search, true);
+            search.TextChanged += delegate { Render(); };
+            top.Children.Add(search); sidebar.Children.Add(top);
             var nav = new StackPanel { Margin = new Thickness(12,0,12,0) };
             string[] names = { "通用", "桌面收纳", "Dock 栏", "音乐组件", "外观与材质", "关于", "组件管理" };
             string[] glyphs = { "\uE713", "\uE80A", "\uE7F4", "\uE8D6", "\uE790", "\uE946", "\uECA5" };
@@ -221,7 +221,7 @@ namespace ClearDesk
             Toggle(g,"日历","查看日期。",state.Calendar,v=>state.Calendar=v);
             Toggle(g,"黄历 / 农历","查看农历信息。",state.Almanac,v=>state.Almanac=v);
             Toggle(g,"天气","自动获取所在地并显示天气。",state.Weather,v=>state.Weather=v);
-            Toggle(g,"快捷控制","音量、WLAN、蓝牙开关与 Windows 设置快捷入口。",state.QuickControls,v=>state.QuickControls=v);
+            Toggle(g,"快捷控制","音量、WLAN、蓝牙开关与 Windows 设置快捷入口。笔记本在此显示系统电池电量。",state.QuickControls,v=>state.QuickControls=v);
             Toggle(g,"快捷控制里显示托盘图标入口","在快捷控制里加一个“托盘图标”入口，点进去是一页列表，列出任务栏右下角的托盘图标（包括被收起的）。左键 = 应用的左键，右键 = 应用自己的菜单（如“退出”），任务栏被隐藏时也不会弹出来；这样不用任务栏也能管理后台应用。",state.TrayArea,v => { state.TrayArea=v; Program.RefreshTray(); });
             Choice(g,"托盘图标范围","显示全部托盘图标，或只显示被收起的 / 只显示任务栏上可见的。",new[]{"全部","仅被收起的","仅任务栏上可见的"},state.TrayScope=="hidden"?1:state.TrayScope=="visible"?2:0,i => { state.TrayScope=i==1?"hidden":i==2?"visible":"all"; Program.RefreshTray(); });
             foreach (var tool in ToolWidgets.Kinds) { string kind = tool.Key; Toggle(g,tool.Value,ToolWidgets.Descriptions[kind],ToolWidgets.On(kind),v=>ToolWidgets.Set(kind,v)); }   // 2.2.0

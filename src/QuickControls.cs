@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
@@ -363,6 +364,9 @@ namespace ClearDesk
         Border wifiTile, btTile, fill, thumb;
         Grid bar;
         Button muteButton;
+        readonly Func<SystemBattery.Reading> batterySource;
+        Button batteryShortcut;
+        TextBlock batteryIcon, batteryPercent;
         bool wifiConnected; string ssid; int? bars;
         DispatcherTimer signal;
         bool netHooked;
@@ -371,8 +375,12 @@ namespace ClearDesk
         static readonly Brush OnBrush = new SolidColorBrush(Color.FromArgb(150, 64, 140, 255));
         static readonly Brush OffBrush = new SolidColorBrush(Color.FromArgb(34, 255, 255, 255));
 
-        public QuickControlWindow() : base(Program.Widget("quick", SystemParameters.WorkArea.Right - 420, 450, 400, 285), "快捷控制")
+        public QuickControlWindow() : this(SystemBattery.IsPortable() ? (Func<SystemBattery.Reading>)SystemBattery.Read : null) { }
+
+        internal QuickControlWindow(Func<SystemBattery.Reading> batterySource)
+            : base(Program.Widget("quick", SystemParameters.WorkArea.Right - 420, 450, 400, 285), "快捷控制")
         {
+            this.batterySource = batterySource;
             var root = new StackPanel(); mainPage = root;
             // volume
             var vrow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
@@ -422,7 +430,19 @@ namespace ClearDesk
             shortcuts.Add(Shortcut("\uE713", "设置", "ms-settings:"));
             shortcuts.Add(Shortcut("\uE7F4", "显示", "ms-settings:display"));
             shortcuts.Add(ShortcutAction("\uE767", "声音", "打开音量合成器", delegate { ShowMixer(true); }));
-            shortcuts.Add(Shortcut("\uE774", "可用网络", "ms-availablenetworks:"));
+            if (batterySource == null) shortcuts.Add(Shortcut("\uE774", "可用网络", "ms-availablenetworks:"));
+            else
+            {
+                batteryShortcut = Shortcut("\uE850", "电池", "ms-settings:powersleep", out batteryIcon, out batteryPercent);
+                shortcuts.Add(batteryShortcut);
+                ShowBattery();
+                SourceInitialized += delegate
+                {
+                    var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+                    if (source != null) source.AddHook(BatteryPowerMessage);
+                };
+                IsVisibleChanged += delegate { if (IsVisible) ShowBattery(); };
+            }
             root.Children.Add(shortcuts.Panel);
             trayEntry = TrayEntry(out trayCount);       // 2.3.4: an entry like 声音 → opens the 托盘图标 page (no strip of tiny icons on the main page any more)
             root.Children.Add(trayEntry);
@@ -448,7 +468,12 @@ namespace ClearDesk
                 ReadWifi();
                 // signal bars have no change event; refresh slowly, only while visible
                 signal = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(20) };
-                signal.Tick += delegate { if (IsVisible && !State.Collapsed) ReadWifi(); };
+                signal.Tick += delegate
+                {
+                    if (!IsVisible || State.Collapsed) return;
+                    ReadWifi();
+                    if (batteryShortcut != null) ShowBattery();
+                };
                 signal.Start();
                 WatchBluetooth();
             }
@@ -625,13 +650,38 @@ namespace ClearDesk
 
         Button Shortcut(string glyph, string name, string uri)
         {
+            return Shortcut(glyph, name, uri, out _, out _);
+        }
+
+        Button Shortcut(string glyph, string name, string uri, out TextBlock icon, out TextBlock label)
+        {
             var p = new StackPanel { Orientation = Orientation.Horizontal };
-            p.Children.Add(Glyph(glyph, 13));
-            var t = Program.Text(name, 11.5); t.Margin = new Thickness(6, 0, 0, 0); p.Children.Add(t);
+            icon = Glyph(glyph, 13);
+            label = Program.Text(name, 11.5);
+            label.Margin = new Thickness(6, 0, 0, 0);
+            p.Children.Add(icon);
+            p.Children.Add(label);
             var b = new Button { Content = p, Template = Flat(), Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)), Height = 32, Padding = new Thickness(6, 0, 6, 0), Cursor = Cursors.Hand, ToolTip = "打开 " + name, Focusable = false };
             AutomationName(b, name);
             if (uri != null) b.Click += (s, e) => { Open(uri); e.Handled = true; };
             return b;
+        }
+
+        void ShowBattery()
+        {
+            var reading = batterySource();
+            batteryIcon.Text = reading.Glyph;
+            batteryPercent.Text = reading.Label;
+            batteryShortcut.ToolTip = reading.Description;
+            AutomationName(batteryShortcut, reading.Description);
+        }
+
+        IntPtr BatteryPowerMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_POWERBROADCAST = 0x218, PBT_APMPOWERSTATUSCHANGE = 0xA, PBT_APMRESUMEAUTOMATIC = 0x12;
+            if (message == WM_POWERBROADCAST && (wParam.ToInt32() == PBT_APMPOWERSTATUSCHANGE || wParam.ToInt32() == PBT_APMRESUMEAUTOMATIC))
+                ShowBattery();
+            return IntPtr.Zero;
         }
 
         // Win11 quick-settings WLAN list (the flyout with 断开连接 / 更多 Wi-Fi 设置). Launched through

@@ -55,6 +55,8 @@ namespace ClearDesk
                 dock.Rebuild();
                 await Task.Delay(650);
                 check(!dock.TestTransitioning && dock.TestRetiringCount == 0 && dock.TestTemporaryCount == 0 && !dock.TestHasSeparator, "rapid consecutive closes settle without duplicate icons, gaps or separator");
+                check(Math.Abs(dock.Left - DockPlacement.CenteredLeft(dock.Geometry(), dock.Width)) < 1,
+                    "Dock stays centered after the window shrinks during icon removal");
                 monitor.Apps = new List<RunningApp>
                 {
                     first,

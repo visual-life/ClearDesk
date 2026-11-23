@@ -55,6 +55,7 @@ namespace ClearDesk
         // the layout so each widget can re-flow (more lyrics, more forecast, wider tiles…).
         // 收纳格 and 便签 resize their real layout themselves.
         protected virtual bool ScalesContent { get { return !(this is OrganizerWindow || this is NoteWindow || this is DockWindow || this is LaunchpadWindow); } }
+        protected virtual bool UsesSavedPosition { get { return true; } }
         internal bool Scalable { get { return ScalesContent; } }
         internal bool HasCustomSize { get { return ScalesContent && (State.CustomW > 0 || State.CustomH > 0); } }
         internal double ContentScale
@@ -271,7 +272,7 @@ namespace ClearDesk
             var wa = SystemParameters.WorkArea;
             // 2.2.2: the saved position stays in State; this only moves the window into view (it used to compare DIPs with pixels and a work area that the
             // top taskbar changes). Dragging the widget later saves the new place.
-            if (!PositionGuard.Reachable(new Point(Left, Top), PositionGuard.Screens(null)))
+            if (UsesSavedPosition && !PositionGuard.Reachable(new Point(Left, Top), PositionGuard.Screens(null)))
             {
                 // 2.2.4: not the top-left default: the nearest fully visible place (the saved value stays, and comes back with the monitor)
                 var near = PositionGuard.Clamp(new Point(Left, Top), new Size(Math.Max(SmallestW, state.Width), Math.Max(60, state.Height)), PositionGuard.WorkAreas(null));
@@ -369,7 +370,7 @@ namespace ClearDesk
             LocationChanged += delegate
             {
                 UpdatePaper();
-                if (ready && !restoring)
+                if (UsesSavedPosition && ready && !restoring)
                 {
                     if (PositionGuard.IsSystemMove(dragging, Mouse.LeftButton == MouseButtonState.Pressed, DateTime.UtcNow < settleUntil)) ScheduleReassert();
                     else { State.X = Left; State.Y = Top; RecordPixels(); Program.SaveSoon(); }
@@ -399,7 +400,7 @@ namespace ClearDesk
             {
                 ready = true;
                 ApplyEdges();
-                if (!Program.Preview) { settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.SettleMs); SchedulePixelCheck(); }
+                if (UsesSavedPosition && !Program.Preview) { settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.SettleMs); SchedulePixelCheck(); }
                 SetCollapsed();
                 UpdatePaper();
                 var h = new WindowInteropHelper(this).Handle;
@@ -615,7 +616,12 @@ namespace ClearDesk
             pixelCheck.Start();
         }
         /// <summary>The system is changing displays / scaling / work area: for a moment location changes that the user did not make are not saved, then undone.</summary>
-        internal void NoteSystemChange() { settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.ChangeMs); ScheduleReassert(); }
+        internal void NoteSystemChange()
+        {
+            if (!UsesSavedPosition) return;
+            settleUntil = DateTime.UtcNow.AddMilliseconds(PositionGuard.ChangeMs);
+            ScheduleReassert();
+        }
         void ScheduleReassert()
         {
             if (WasClosed) return;
@@ -730,16 +736,18 @@ namespace ClearDesk
             }
             c.Items.Add(create);
             c.Items.Add(Item("打开设置", Program.ShowSettings));
-            c.Items.Add(Item("恢复位置", delegate
-            {
-                Left = 20;
-                Top = 20;
-                State.X = Left;
-                State.Y = Top;
-                Program.Save();
-            }));
+            c.Items.Add(Item("恢复位置", RestorePosition));
             c.Items.Add(Item("关闭组件", Disable));
             return c;
+        }
+
+        protected virtual void RestorePosition()
+        {
+            Left = 20;
+            Top = 20;
+            State.X = Left;
+            State.Y = Top;
+            Program.Save();
         }
 
         internal static string LockActionText(bool locked) { return locked ? "解锁位置" : "锁定位置"; }

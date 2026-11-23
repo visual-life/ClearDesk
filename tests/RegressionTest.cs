@@ -42,6 +42,16 @@ namespace ClearDesk
             try
             {
                 await Task.Delay(1200);
+                if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v237")
+                {
+                    var dock237 = Program.OpenWindows.OfType<DockWindow>().First();
+                    V204Tests.Rules(Check); V232Tests.Rules(Check);
+                    await SettingsWindowTests.Run(Check);
+                    await V204Tests.RunBattery(Check);
+                    await V232Tests.Run(Check);
+                    await DockTransitionsTest.Run(dock237, Check);
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("CLEARDESK_ONLY") == "v227")      // developer shortcut: only the 2.2.6-2.2.8 folder tests
                 {
                     V236Tests.Rules(Check); V235Tests.Rules(Check); V234Tests.Rules(Check); V233Tests.Rules(Check); V232Tests.Rules(Check); V231Tests.Rules(Check); V230Tests.Rules(Check); V229Tests.Rules(Check); V228Tests.Rules(Check); V227Tests.Rules(Check); V226Tests.Rules(Check); await V235Tests.Run(Check); await V234Tests.Run(Check); await V233Tests.Run(Check); await V232Tests.Run(Check); await V231Tests.Run(Check); await V230Tests.Run(Check); await V229Tests.Run(Check); await V228Tests.Run(Check); await V227Tests.Run(Check); await V226Tests.Run(Check);
@@ -277,6 +287,7 @@ namespace ClearDesk
                 await V2Tests.Run(organizer, Check);
                 await V203Tests.Run(dock, Check);
                 await V204Tests.Run(Check);
+                await V204Tests.RunBattery(Check);
                 await V205Tests.Run(Check);
                 await V206Tests.Run(Check);
                 await V207Tests.Run(Check);

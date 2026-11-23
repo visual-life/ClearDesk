@@ -38,6 +38,19 @@ namespace ClearDesk
                 window.Show(); await Task.Delay(180); window.UpdateLayout();
                 check(window.TestCards==2 && Children<CheckBox>(window).Count()==12,"settings general page contains the eight original desktop and window switches plus GPU rendering, top taskbar auto-hide, (2.2.4) the unverified-TranslucentTB option and (2.3.0) 完全隐藏任务栏");
                 Capture(window,"settings-general");
+                var search = Children<TextBox>(window).Single(t => AutomationProperties.GetName(t) == "搜索设置");
+                var placeholder = (TextBlock)search.Template.FindName("Placeholder", search);
+                var editor = (ScrollViewer)search.Template.FindName("PART_ContentHost", search);
+                check(placeholder.IsVisible && editor.ActualWidth > 100 && editor.ActualHeight >= 14,
+                    "settings search has room for the placeholder and its native text editor");
+                window.Activate();
+                search.Focus();
+                search.SelectedText = "透明任务栏";
+                window.UpdateLayout();
+                check(search.Text == "透明任务栏" && !placeholder.IsVisible
+                    && Children<TextBlock>(window).Any(t => t.IsVisible && t.Text == "搜索结果"),
+                    "settings search displays an edited Chinese query and its live results");
+                Capture(window, "settings-search");
                 bool allPages=true;
                 for(int i=0;i<7;i++) { window.TestSelect(i); window.UpdateLayout(); allPages &= window.TestCards>0; Capture(window,"settings-page-"+i); }
                 check(allPages,"all seven settings categories (incl. 组件管理) render without losing their cards");

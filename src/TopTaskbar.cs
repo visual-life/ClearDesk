@@ -55,8 +55,8 @@ namespace ClearDesk
         static DateTime holdUntil = DateTime.MinValue;
         internal static void Hold(int ms) { holdUntil = DateTime.UtcNow.AddMilliseconds(ms); }
         public static bool Active { get { return hidden; } }
-        /// <summary>2.3.2: ClearDesk is hiding a tray on this edge right now (the Dock then rests on the physical screen bottom).</summary>
-        internal static bool HidesEdge(Edge e) { return hidden && edges.Values.Contains(e); }
+        /// <summary>A managed tray overlays the work area when temporarily revealed.</summary>
+        internal static bool ManagesTray(IntPtr hwnd) { return hidden && edges.ContainsKey(hwnd); }
         public static bool Revealed { get { return revealed; } }
 
         static IntPtr Dpi() { try { return SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch { return IntPtr.Zero; } }

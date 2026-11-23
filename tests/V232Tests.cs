@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using Edge = ClearDesk.TopTaskbar.Edge;
 
 namespace ClearDesk
@@ -50,6 +52,9 @@ namespace ClearDesk
                 }
                 var wd = DockPlacement.WorkDip(Geo(Edge.Left, bar, false, false, s));
                 check(Math.Abs(wd.Left - bar / s) < .01 && Math.Abs(wd.Right - 1920 / s) < .01, "2.3.2 visible left taskbar: the Dock is centred in the remaining width" + tag);
+                var hiddenSide = Geo(Edge.Left, bar, true, true, s);
+                check(Math.Abs((DockPlacement.CenteredLeft(hiddenSide, 500) + 250) * s - 960) < .01,
+                    "Dock stays centered while a hidden side taskbar still reserves work area" + tag);
                 check(Math.Abs(DockPlacement.MonitorBottomDip(hidden) * s - 1080) < .01, "2.3.2 hidden position is below the monitor's own bottom" + tag);
             }
             check(DockAutoHide.InSummonZone(500, 1079, 100, 900, 1080) && DockAutoHide.InSummonZone(500, 1078, 100, 900, 1080) && !DockAutoHide.InSummonZone(500, 1077, 100, 900, 1080) && !DockAutoHide.InSummonZone(50, 1079, 100, 900, 1080),
@@ -73,6 +78,24 @@ namespace ClearDesk
             try
             {
                 Program.S.DockAutoHide = false; Program.S.DockOffset = 0;
+                var state = dock.TestState;
+                double savedX = state.X, savedY = state.Y;
+                try
+                {
+                    state.X = state.Y = 20; // an old Restore Position entry in a 2.3.6 settings file
+                    dock.NoteSystemChange();
+                    dock.MoveQuietly(20, 155);
+                    await Task.Delay(PositionGuard.ChangeMs + 700);
+                    check(Math.Abs(dock.Left - DockPlacement.CenteredLeft(dock.Geometry(), dock.Width)) < 1
+                        && Math.Abs(dock.Top - dock.ShownTop) < 1 && state.X == 20 && state.Y == 20,
+                        "Dock repairs a position drift and ignores old widget coordinates after a display change");
+                    var restore = dock.ContextMenu.Items.OfType<MenuItem>().Single(m => Equals(m.Header, "恢复位置"));
+                    restore.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                    check(Math.Abs(dock.Left - DockPlacement.CenteredLeft(dock.Geometry(), dock.Width)) < 1
+                        && Math.Abs(dock.Top - dock.ShownTop) < 1, "Dock's Restore Position command keeps it centered at the bottom");
+                }
+                finally { state.X = savedX; state.Y = savedY; }
+
                 foreach (double s in new[] { 1.0, 1.25, 1.5 })
                 {
                     string tag = " @" + (int)(s * 100) + "%"; int bar = (int)Math.Round(48 * s);

@@ -19,6 +19,26 @@ namespace ClearDesk
  </ControlTemplate></Setter.Value></Setter>
 </Style>
 <Style TargetType='TextBox'><Setter Property='Foreground' Value='#243148'/><Setter Property='CaretBrush' Value='#1677FF'/><Setter Property='Background' Value='#AAFFFFFF'/><Setter Property='BorderBrush' Value='#DCE4F1'/><Setter Property='Padding' Value='10,9'/><Setter Property='Template'><Setter.Value><ControlTemplate TargetType='TextBox'><Border x:Name='B' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='1' CornerRadius='10' Padding='{TemplateBinding Padding}'><ScrollViewer x:Name='PART_ContentHost'/></Border><ControlTemplate.Triggers><Trigger Property='IsKeyboardFocusWithin' Value='True'><Setter TargetName='B' Property='BorderBrush' Value='#1677FF'/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+<Style x:Key='SettingsSearch' TargetType='TextBox' BasedOn='{StaticResource {x:Type TextBox}}'>
+ <Setter Property='Height' Value='40'/><Setter Property='Padding' Value='0'/><Setter Property='Background' Value='#F7F9FD'/><Setter Property='BorderBrush' Value='#C7D4E8'/>
+ <Setter Property='Template'><Setter.Value><ControlTemplate TargetType='TextBox'>
+  <Border x:Name='SearchBorder' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='1' CornerRadius='9' Padding='10,0'>
+   <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width='20'/><ColumnDefinition Width='*'/></Grid.ColumnDefinitions>
+    <TextBlock Text='&#xE721;' FontFamily='Segoe MDL2 Assets' FontSize='13' Foreground='#60738D' VerticalAlignment='Center' IsHitTestVisible='False'/>
+    <ScrollViewer x:Name='PART_ContentHost' Grid.Column='1' Focusable='False' VerticalAlignment='Center'/>
+    <TextBlock x:Name='Placeholder' Grid.Column='1' Text='搜索设置' Foreground='#65748A' VerticalAlignment='Center' IsHitTestVisible='False' Visibility='Collapsed'/>
+   </Grid>
+  </Border>
+  <ControlTemplate.Triggers>
+   <Trigger Property='Text' Value=''><Setter TargetName='Placeholder' Property='Visibility' Value='Visible'/></Trigger>
+   <Trigger Property='IsKeyboardFocusWithin' Value='True'>
+    <Setter TargetName='SearchBorder' Property='BorderBrush' Value='#1677FF'/><Setter TargetName='SearchBorder' Property='Background' Value='White'/>
+    <Setter TargetName='Placeholder' Property='Visibility' Value='Collapsed'/>
+   </Trigger>
+  </ControlTemplate.Triggers>
+ </ControlTemplate></Setter.Value></Setter>
+</Style>
 <Style TargetType='ComboBoxItem'><Setter Property='Foreground' Value='#243148'/><Setter Property='Padding' Value='12,8'/><Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ComboBoxItem'><Border x:Name='B' Background='Transparent' CornerRadius='6' Padding='{TemplateBinding Padding}'><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property='IsHighlighted' Value='True'><Setter TargetName='B' Property='Background' Value='#EBF2FF'/></Trigger><Trigger Property='IsSelected' Value='True'><Setter TargetName='B' Property='Background' Value='#DDEBFF'/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
 <Style TargetType='ComboBox'><Setter Property='Foreground' Value='#243148'/><Setter Property='MinWidth' Value='155'/><Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ComboBox'><Grid>
 <ToggleButton Focusable='False' IsChecked='{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}'><ToggleButton.Template><ControlTemplate TargetType='ToggleButton'><Border Background='#F3F6FB' BorderBrush='#DCE2ED' BorderThickness='1' CornerRadius='8'><TextBlock Text='⌄' HorizontalAlignment='Right' Margin='0,0,11,3' VerticalAlignment='Center' Foreground='#62718A'/></Border></ControlTemplate></ToggleButton.Template></ToggleButton>

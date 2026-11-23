@@ -3,6 +3,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -21,6 +24,57 @@ namespace ClearDesk
             check(QuickLogic.WifiGlyph(true, 1) == "\uE872" && QuickLogic.WifiGlyph(true, 5) == "\uE701", "quick: WLAN glyph follows signal bars");
             check(WidgetCatalog.IsKnown("quick") && WidgetManager.Singletons.Contains("quick") && WidgetManager.KindName("quick") == "快捷控制", "quick: listed in 新建组件 catalog and 组件管理");
             check(!new Settings().QuickControls, "quick: off by default");
+            check(!SystemBattery.IsPortable(SystemBattery.PlatformRole.Desktop, false, false)
+                && !SystemBattery.IsPortable(SystemBattery.PlatformRole.Desktop, true, true)
+                && SystemBattery.IsPortable(SystemBattery.PlatformRole.Mobile, false, false)
+                && SystemBattery.IsPortable(SystemBattery.PlatformRole.Unknown, true, false),
+                "quick: portable computers use system battery while desktops and UPS remain on Available Networks");
+            check(new SystemBattery.Reading(1, 255, 255).Label == "电量未知"
+                && new SystemBattery.Reading(1, 128, 100).Label == "无电池"
+                && new SystemBattery.Reading(0, 4, 0).Label == "0%",
+                "quick: distinguishes a missing battery, unknown data and an empty battery");
+        }
+
+        static Button FindShortcut(DependencyObject element, string name)
+        {
+            var button = element as Button;
+            if (button != null && AutomationProperties.GetName(button).StartsWith(name, StringComparison.Ordinal)) return button;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++)
+            {
+                var match = FindShortcut(VisualTreeHelper.GetChild(element, i), name);
+                if (match != null) return match;
+            }
+            return null;
+        }
+
+        internal static async Task RunBattery(Action<bool, string> check)
+        {
+            var desktop = new QuickControlWindow(null);
+            try
+            {
+                desktop.Show(); desktop.UpdateLayout();
+                check(FindShortcut(desktop, "可用网络") != null && FindShortcut(desktop, "电池状态") == null,
+                    "quick: desktop still displays the Available Networks shortcut");
+            }
+            finally { desktop.Close(); }
+            var reading = new SystemBattery.Reading(0, 1, 73);
+            var laptop = new QuickControlWindow(() => reading);
+            try
+            {
+                laptop.Show(); laptop.UpdateLayout();
+                var battery = FindShortcut(laptop, "电池状态");
+                check(battery != null && Equals(battery.ToolTip, "电池状态：电池供电 73%") && FindShortcut(laptop, "可用网络") == null,
+                    "quick: laptop replaces Available Networks with its current battery percentage");
+                reading = new SystemBattery.Reading(1, 8, 74);
+                Native.PostMessage(new WindowInteropHelper(laptop).Handle, 0x218, (IntPtr)0xA, IntPtr.Zero);
+                await Task.Delay(150);
+                check(Equals(battery.ToolTip, "电池状态：充电中 74%"), "quick: battery refreshes on a power status broadcast");
+                reading = new SystemBattery.Reading(1, 1, 100);
+                Native.PostMessage(new WindowInteropHelper(laptop).Handle, 0x218, (IntPtr)0xA, IntPtr.Zero);
+                await Task.Delay(150);
+                check(Equals(battery.ToolTip, "电池状态：已充满 100%"), "quick: shows a fully charged battery at 100%");
+            }
+            finally { laptop.Close(); }
         }
 
         public static async Task Run(Action<bool, string> check)
