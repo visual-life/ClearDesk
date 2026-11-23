@@ -44,10 +44,12 @@ namespace ClearDesk
         CompositionGeometricClip clip;
         Native.RECT last;
         float lastRadius;
+        int lastVisualWidth, lastVisualOffset;
         bool shown, disposed;
         public float Radius = 25;
         public bool Enabled { get; private set; }
         public IntPtr Handle { get { return source == null ? IntPtr.Zero : source.Handle; } }
+        public Native.RECT? Bounds { get { return shown ? last : (Native.RECT?)null; } }
 
         public DockBackdrop()
         {
@@ -113,7 +115,7 @@ namespace ClearDesk
             return IntPtr.Zero;
         }
 
-        public void Sync(IntPtr dock, Rect bounds, double scale, bool visible)
+        public void Sync(IntPtr dock, Rect bounds, double scale, bool visible, Native.RECT? retainedBounds = null)
         {
             if (disposed) return;
             if (!visible || !Enabled || bounds.IsEmpty || bounds.Width < 1 || bounds.Height < 1)
@@ -122,18 +124,34 @@ namespace ClearDesk
                 shown = false;
                 return;
             }
-            int x = (int)Math.Round(bounds.X), y = (int)Math.Round(bounds.Y);
-            int width = Math.Max(1, (int)Math.Round(bounds.Width)), height = Math.Max(1, (int)Math.Round(bounds.Height));
-            float radius = (float)(Radius * scale);
-            bool sizeChanged = last.R - last.L != width || last.B - last.T != height || radius != lastRadius;
-            if (sizeChanged)
+            int visualLeft = (int)Math.Round(bounds.X);
+            int visualWidth = Math.Max(1, (int)Math.Round(bounds.Width));
+            int x = visualLeft, y = (int)Math.Round(bounds.Y);
+            int width = visualWidth, height = Math.Max(1, (int)Math.Round(bounds.Height));
+            if (retainedBounds.HasValue)
             {
-                visual.Size = geometry.Size = new Vector2(width, height);
+                var retained = retainedBounds.Value;
+                int retainedWidth = retained.R - retained.L;
+                if (retainedWidth >= visualWidth)
+                {
+                    x = retained.L;
+                    width = retainedWidth;
+                }
+            }
+            int offset = Math.Max(0, Math.Min(width - visualWidth, visualLeft - x));
+            float radius = (float)(Radius * scale);
+            if (lastVisualWidth != visualWidth || last.B - last.T != height || radius != lastRadius)
+            {
+                visual.Size = geometry.Size = new Vector2(visualWidth, height);
                 geometry.CornerRadius = new Vector2(radius);
             }
+            if (lastVisualOffset != offset) visual.Offset = new Vector3(offset, 0, 0);
+            bool sizeChanged = last.R - last.L != width || last.B - last.T != height;
             if (!shown || sizeChanged || last.L != x || last.T != y || GetWindow(dock, 2) != Handle)
                 Native.SetWindowPos(Handle, dock, x, y, width, height, 0x10 | 0x40);
             last = new Native.RECT { L = x, T = y, R = x + width, B = y + height };
+            lastVisualWidth = visualWidth;
+            lastVisualOffset = offset;
             lastRadius = radius;
             shown = true;
         }

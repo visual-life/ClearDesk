@@ -77,10 +77,12 @@ namespace ClearDesk
         {
             var dpi = VisualTreeHelper.GetDpi(dock);
             double top = dock.ShownTop;
+            double width = dock.DockInteractionWidth;
+            double left = dock.Left + (dock.Width - width) / 2;
             return new Native.RECT
             {
-                L = (int)Math.Round(dock.Left * dpi.DpiScaleX), T = (int)Math.Round(top * dpi.DpiScaleY),
-                R = (int)Math.Round((dock.Left + dock.ActualWidth) * dpi.DpiScaleX), B = (int)Math.Round((top + dock.ActualHeight) * dpi.DpiScaleY)
+                L = (int)Math.Round(left * dpi.DpiScaleX), T = (int)Math.Round(top * dpi.DpiScaleY),
+                R = (int)Math.Round((left + width) * dpi.DpiScaleX), B = (int)Math.Round((top + dock.ActualHeight) * dpi.DpiScaleY)
             };
         }
 

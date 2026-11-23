@@ -25,6 +25,7 @@ namespace ClearDesk
         Border plate, separator, marker;
         GlassPane dockGlass;
         DockBackdrop liveBackdrop, pendingBackdrop;
+        Native.RECT? retainedBackdropBounds;
         DispatcherTimer backdropRefresh, backdropSwap;
         DesktopVisibility desktop;
         double cursor = double.NaN, baseSize;
@@ -219,23 +220,39 @@ namespace ClearDesk
                 SkippedRebuilds++;
                 return false;
             }
-            Rebuild(); return true;
+            if (transitioning)
+            {
+                appUpdatePending = true;
+                return false;
+            }
+            Rebuild(snapshot);
+            return true;
         }
 
         void RefreshEntryState(List<DockEntry> snapshot)
         {
             for (int i = 0; i < entries.Count; i++)
             {
-                var entry = entries[i];
-                var latest = snapshot[i].Running;
-                if (ReferenceEquals(entry.Running, latest)) continue;
-                var before = entry.Running?.Windows;
-                var after = latest?.Windows;
-                entry.Running = latest;
-                if (!transitioning) dots[i + 1].Visibility = entry.IsRunning ? Visibility.Visible : Visibility.Collapsed;
-                if ((before?.Count > 1 || after?.Count > 1) && (before == null || after == null || !before.SequenceEqual(after)))
-                    BindEntryMenu(buttons[i + 1], entry);
+                UpdateEntry(buttons[i + 1], snapshot[i]);
+                if (!transitioning) dots[i + 1].Visibility = entries[i].IsRunning ? Visibility.Visible : Visibility.Collapsed;
             }
+        }
+
+        DockEntry UpdateEntry(Button button, DockEntry latest, bool refreshMenu = false)
+        {
+            var entry = (DockEntry)button.Tag;
+            var before = entry.Running?.Windows;
+            var after = latest.Running?.Windows;
+            entry.Identity = latest.Identity;
+            entry.Running = latest.Running;
+            if (!entry.Pinned)
+            {
+                string title = entry.Title;
+                if (!Equals(button.ToolTip, title)) button.ToolTip = title;
+            }
+            if (refreshMenu || ((before?.Count > 1 || after?.Count > 1) && (before == null || after == null || !before.SequenceEqual(after))))
+                BindEntryMenu(button, entry);
+            return entry;
         }
 
         DockAutoHide autoHide;
@@ -243,6 +260,7 @@ namespace ClearDesk
         protected override void RestorePosition() { ApplyOffset(); }
         internal double ShownTop { get; private set; }
         internal double HiddenTop { get; private set; }
+        internal double DockInteractionWidth { get { return targetWidth; } }
         internal DockAutoHide AutoHide { get { return autoHide; } }
         internal DockAutoHide TestAutoHide() { if (autoHide == null) autoHide = new DockAutoHide(this); return autoHide; }
         internal void ApplyOffset()
@@ -325,6 +343,7 @@ namespace ClearDesk
                 CancelBackdropSwap();
                 liveBackdrop.Dispose();
                 liveBackdrop = null;
+                retainedBackdropBounds = null;
             }
             SyncBackdrop();
         }
@@ -343,8 +362,8 @@ namespace ClearDesk
             var bottomRight = plate.PointToScreen(new Point(plate.ActualWidth, plate.ActualHeight));
             var bounds = new Rect(topLeft, bottomRight);
             double scale = bounds.Width / plate.ActualWidth;
-            liveBackdrop.Sync(handle, bounds, scale, true);
-            pendingBackdrop?.Sync(liveBackdrop.Handle, bounds, scale, true);
+            liveBackdrop.Sync(handle, bounds, scale, true, retainedBackdropBounds);
+            pendingBackdrop?.Sync(liveBackdrop.Handle, bounds, scale, true, retainedBackdropBounds);
         }
 
         internal void RequestBackdropRefresh()
@@ -355,6 +374,7 @@ namespace ClearDesk
                 backdropRefresh = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(160) };
                 backdropRefresh.Tick += delegate
                 {
+                    if (transitioning) return;
                     backdropRefresh.Stop();
                     if (!IsVisible || WasClosed || (autoHide != null && autoHide.Hidden)) return;
                     RefreshBackdropSample();
@@ -388,6 +408,7 @@ namespace ClearDesk
 
         void CompleteBackdropSwap()
         {
+            if (transitioning) return;
             backdropSwap.Stop();
             if (pendingBackdrop == null) return;
             if (WasClosed || !IsVisible || liveBackdrop == null || !Native.IsWindowVisible(pendingBackdrop.Handle)
@@ -482,7 +503,9 @@ namespace ClearDesk
             halo.Opacity = 0; halo.Visibility = Visibility.Collapsed;
         }
 
-        public void Rebuild()
+        public void Rebuild() { Rebuild(null); }
+
+        void Rebuild(List<DockEntry> snapshot)
         {
             if (rebuilding || WasClosed)
                 return;
@@ -501,16 +524,19 @@ namespace ClearDesk
                 double previousPlateWidth = plate.Width, previousPlateHeight = plate.Height;
                 double previousSeparatorX = Left + Canvas.GetLeft(separator);
                 bool previousSeparator = separatorBefore >= 0;
-                for (int i = canvas.Children.Count - 1; i >= 1; i--)
-                    canvas.Children.RemoveAt(i);
+                canvas.Children.Remove(separator);
+                var departing = new List<ItemPosition>(previous);
                 buttons.Clear();
                 sizes.Clear();
                 dots.Clear();
                 halos.Clear();
-                entries = running.Entries(Program.S.Pins); builtSignature = Signature(entries); RebuildCount++;
+                entries = snapshot ?? running.Entries(Program.S.Pins); builtSignature = Signature(entries); RebuildCount++;
                 pinnedCount = entries.Count(e => e.Pinned);
                 separatorBefore = entries.Any(e => !e.Pinned) ? pinnedCount + 1 : -1;
-                var geo = Geometry(); geometrySig = DockPlacement.Signature(geo);
+                var geo = Geometry();
+                string nextGeometrySig = DockPlacement.Signature(geo);
+                bool sameGeometry = geometrySig == nextGeometrySig;
+                geometrySig = nextGeometrySig;
                 var wa = DockPlacement.WorkDip(geo);
                 int count = entries.Count + 1;
                 double gap = separatorBefore >= 0 ? 18 : 0;
@@ -518,25 +544,55 @@ namespace ClearDesk
                 targetWidth = Math.Min(wa.Width - 20, 40 + count * (baseSize + 9) + 130 + gap);
                 targetHeight = baseSize * 1.8 + 46;
                 bool animate = IsLoaded && IsVisible && previous.Count > 0 && ItemsChanged(previous);
-                Width = animate ? Math.Max(previousWidth, targetWidth) : targetWidth;
+                preserveWindowWidth = snapshot != null && sameGeometry && previousWidth > targetWidth
+                    && Math.Abs(previousHeight - targetHeight) < .01;
+                // Reuse both native surfaces during an app-list shrink. Only the centered plate and icons get smaller.
+                retainedBackdropBounds = preserveWindowWidth ? liveBackdrop?.Bounds : null;
+                Width = animate || preserveWindowWidth ? Math.Max(previousWidth, targetWidth) : targetWidth;
                 Height = animate ? Math.Max(previousHeight, targetHeight) : targetHeight;
                 State.Height = targetHeight;
                 Place(geo);
-                AddIcon(null);
-                foreach (var entry in entries)
-                    AddIcon(entry);
+                KeepOrAddIcon(null, departing);
+                for (int i = 0; i < entries.Count; i++)
+                    entries[i] = KeepOrAddIcon(entries[i], departing);
+                foreach (var old in departing)
+                {
+                    canvas.Children.Remove(old.Halo);
+                    if (animate) continue;
+                    canvas.Children.Remove(old.Button);
+                    canvas.Children.Remove(old.Dot);
+                }
                 if (separatorBefore >= 0)
                     canvas.Children.Add(separator);
-                canvas.Children.Add(marker);
+                if (!canvas.Children.Contains(marker)) canvas.Children.Add(marker);
                 LayoutIcons();
                 ApplyAttention(false);
                 if (animate)
-                    BeginTransition(previous, previousPlateWidth, previousPlateHeight, previousSeparator, previousSeparatorX);
+                    BeginTransition(previous, departing, previousPlateWidth, previousPlateHeight, previousSeparator, previousSeparatorX);
             }
             finally
             {
                 rebuilding = false;
             }
+        }
+
+        DockEntry KeepOrAddIcon(DockEntry entry, List<ItemPosition> departing)
+        {
+            var old = departing.FirstOrDefault(item => string.Equals(item.Key, ItemKey(entry), StringComparison.OrdinalIgnoreCase));
+            if (old == null)
+            {
+                AddIcon(entry);
+                return entry;
+            }
+
+            departing.Remove(old);
+            var current = entry == null ? null : UpdateEntry(old.Button, entry, refreshMenu: true);
+            buttons.Add(old.Button);
+            dots.Add(old.Dot);
+            halos.Add(old.Halo);
+            sizes.Add(baseSize);
+            old.Dot.Visibility = current != null && current.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+            return current;
         }
 
         void AddIcon(DockEntry entry)
@@ -1016,7 +1072,8 @@ namespace ClearDesk
             if (target > from)
                 target--;
             Point p = e.GetPosition(canvas);
-            bool inside = p.X >= 0 && p.X <= ActualWidth && p.Y >= 0 && p.Y <= ActualHeight;
+            double side = (Width - DockInteractionWidth) / 2;
+            bool inside = p.X >= side && p.X <= Width - side && p.Y >= 0 && p.Y <= ActualHeight;
             e.Handled = true;
             CancelDrag();
             if (inside)

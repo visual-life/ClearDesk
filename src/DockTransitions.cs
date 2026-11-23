@@ -15,7 +15,7 @@ namespace ClearDesk
         {
             public string Key;
             public Button Button;
-            public Border Dot;
+            public Border Dot, Halo;
             public double X, Y, Size, DotX, DotY;
             public bool Running;
         }
@@ -23,7 +23,7 @@ namespace ClearDesk
         const int TransitionMilliseconds = 240;
         readonly List<UIElement> retiring = new List<UIElement>();
         DispatcherTimer transitionTimer;
-        bool transitioning, rebuildPending;
+        bool transitioning, rebuildPending, appUpdatePending, preserveWindowWidth;
         double targetWidth, targetHeight;
         static string ItemKey(DockEntry entry)
         {
@@ -36,7 +36,19 @@ namespace ClearDesk
             for (int i = 0; i < buttons.Count; i++)
             {
                 var entry = buttons[i].Tag as DockEntry;
-                result.Add(new ItemPosition { Key = ItemKey(entry), Button = buttons[i], Dot = dots[i], X = Left + Canvas.GetLeft(buttons[i]), Y = Top + Canvas.GetTop(buttons[i]), Size = buttons[i].Width, DotX = Left + Canvas.GetLeft(dots[i]), DotY = Top + Canvas.GetTop(dots[i]), Running = entry != null && entry.IsRunning });
+                result.Add(new ItemPosition
+                {
+                    Key = ItemKey(entry),
+                    Button = buttons[i],
+                    Dot = dots[i],
+                    Halo = halos[i],
+                    X = Left + Canvas.GetLeft(buttons[i]),
+                    Y = Top + Canvas.GetTop(buttons[i]),
+                    Size = buttons[i].Width,
+                    DotX = Left + Canvas.GetLeft(dots[i]),
+                    DotY = Top + Canvas.GetTop(dots[i]),
+                    Running = entry != null && entry.IsRunning
+                });
             }
 
             return result;
@@ -78,21 +90,19 @@ namespace ClearDesk
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
         }
 
-        void BeginTransition(List<ItemPosition> previous, double previousPlateWidth, double previousPlateHeight, bool hadSeparator, double separatorX)
+        void BeginTransition(List<ItemPosition> previous, List<ItemPosition> departing, double previousPlateWidth, double previousPlateHeight, bool hadSeparator, double separatorX)
         {
             transitioning = true;
             cursor = double.NaN;
             dockGlass.ResetPointer();
-            var remaining = new List<ItemPosition>(previous);
             for (int i = 0; i < buttons.Count; i++)
             {
                 var button = buttons[i];
                 var entry = button.Tag as DockEntry;
-                var old = remaining.FirstOrDefault(p => string.Equals(p.Key, ItemKey(entry), StringComparison.OrdinalIgnoreCase));
+                var old = previous.FirstOrDefault(p => p.Button == button);
                 bool isRunning = entry != null && entry.IsRunning;
                 if (old != null)
                 {
-                    remaining.Remove(old);
                     Animate(button, Canvas.LeftProperty, old.X - Left, Canvas.GetLeft(button));
                     Animate(button, Canvas.TopProperty, old.Y - Top, Canvas.GetTop(button));
                     Animate(button, WidthProperty, old.Size, button.Width);
@@ -114,7 +124,7 @@ namespace ClearDesk
             }
 
             // Keep departing visuals until they fade out. They cannot launch a closed app.
-            foreach (var old in remaining)
+            foreach (var old in departing)
             {
                 old.Button.IsHitTestVisible = false;
                 old.Button.ContextMenu = null;
@@ -123,8 +133,6 @@ namespace ClearDesk
                 Canvas.SetTop(old.Button, old.Y - Top);
                 Canvas.SetLeft(old.Dot, old.DotX - Left);
                 Canvas.SetTop(old.Dot, old.DotY - Top);
-                canvas.Children.Add(old.Button);
-                canvas.Children.Add(old.Dot);
                 retiring.Add(old.Button);
                 retiring.Add(old.Dot);
                 Animate(old.Button, OpacityProperty, 1, 0, 170);
@@ -208,15 +216,18 @@ namespace ClearDesk
             if (separatorBefore < 0)
                 canvas.Children.Remove(separator);
             bool pending = rebuildPending;
-            rebuildPending = false;
+            bool appsChanged = appUpdatePending;
+            rebuildPending = appUpdatePending = false;
             if (WasClosed)
                 return;
-            Width = targetWidth;
+            if (!preserveWindowWidth) Width = targetWidth;
             Height = targetHeight;
             ApplyOffset();      // 2.3.2: position (Left / Top) comes from DockPlacement
             LayoutIcons();
             if (refresh && pending)
                 Rebuild();
+            else if (refresh && appsChanged)
+                RebuildIfChanged();
         }
 
         internal bool TestTransitioning
