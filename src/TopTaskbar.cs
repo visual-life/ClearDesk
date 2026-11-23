@@ -34,7 +34,7 @@ namespace ClearDesk
         [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint tid, ref GUITHREADINFO info);
         [StructLayout(LayoutKind.Sequential)] struct GUITHREADINFO { public int Size; public uint Flags; public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret; public RECT CaretRect; }
 
-        const uint SPI_SETWORKAREA = 0x2F, SPI_GETWORKAREA = 0x30, SPIF_SENDCHANGE = 2;
+        const uint SPI_SETWORKAREA = 0x2F;
         const int SW_HIDE = 0, SW_SHOWNA = 8;
         const int EdgePx = 2, DwellMs = 150, LeaveMs = 450;
 
@@ -50,7 +50,16 @@ namespace ClearDesk
         static List<IntPtr> animTrays = new List<IntPtr>();
         static double animFrom, animTo, animOffset = -1; // offset as a fraction of tray height (-1 hidden .. 0 shown)
         static bool animating;
-        static DateTime edgeSince = DateTime.MinValue, outsideSince = DateTime.MinValue, lastWork = DateTime.MinValue;
+        static DateTime edgeSince = DateTime.MinValue, outsideSince = DateTime.MinValue;
+        static DateTime nextForegroundCheck, nextFitAttempt;
+        static IntPtr lastFitWindow;
+        struct ExpandedPopup
+        {
+            public uint Thread, Process;
+            public long Style;
+            public RECT Before, Expanded;
+        }
+        static readonly Dictionary<IntPtr, ExpandedPopup> expandedPopups = new Dictionary<IntPtr, ExpandedPopup>();
         static readonly Dictionary<uint, string> procNames = new Dictionary<uint, string>();
         static DateTime holdUntil = DateTime.MinValue;
         internal static void Hold(int ms) { holdUntil = DateTime.UtcNow.AddMilliseconds(ms); }
@@ -205,6 +214,8 @@ namespace ClearDesk
             StopAnim();
             if (hidden || revealed) Restore();
             hidden = revealed = false;
+            lastFitWindow = IntPtr.Zero;
+            nextForegroundCheck = nextFitAttempt = DateTime.MinValue;
             if (Program.Services != null) Program.Services.MarkTopTaskbar(false);
         }
 
@@ -272,7 +283,13 @@ namespace ClearDesk
                         Slide(top, -1);
                     }
                 }
-                ClaimWork(top); // cheap: only acts when explorer has re-reserved the strip
+                IntPtr foreground = IntPtr.Zero;
+                if (now >= nextForegroundCheck)
+                {
+                    nextForegroundCheck = now.AddMilliseconds(200);
+                    foreground = GetForegroundWindow();
+                }
+                ClaimWork(top, foreground, now);
             }
             finally { Undpi(old); }
         }
@@ -412,27 +429,116 @@ namespace ClearDesk
         // Give the strip the taskbar reserved back to applications on each managed-tray monitor (any edge).
         // No SPIF_SENDCHANGE: explorer answers that broadcast by re-reserving its strip, which
         // makes the work area flap. Instead the already-maximized windows are resized directly.
-        static void ClaimWork(List<IntPtr> top)
+        static void ClaimWork(List<IntPtr> top, IntPtr foreground = default(IntPtr), DateTime now = default(DateTime))
         {
             foreach (var t in top)
             {
-                RECT mon; if (!Monitor(t, out mon)) continue;
                 var edge = EdgeFor(t);
+                var monitor = MonitorFromWindow(t, 2);
                 var mi = new MONITORINFO { Size = Marshal.SizeOf(typeof(MONITORINFO)) };
-                GetMonitorInfo(MonitorFromWindow(t, 2), ref mi);
-                var w = Claim(edge, mon, mi.Work);
-                if (w.T != mi.Work.T || w.B != mi.Work.B || w.L != mi.Work.L || w.R != mi.Work.R)
+                if (!GetMonitorInfo(monitor, ref mi)) continue;
+                var work = Claim(edge, mi.Monitor, mi.Work);
+                if (work.T != mi.Work.T || work.B != mi.Work.B || work.L != mi.Work.L || work.R != mi.Work.R)
                 {
-                    if (SpiRect(SPI_SETWORKAREA, 0, ref w, 0))
-                        ShiftMaximized(MonitorFromWindow(t, 2), edge, mi.Work, w);
+                    if (!SpiRect(SPI_SETWORKAREA, 0, ref work, 0)) continue;
+                    ShiftMaximized(monitor, edge, mi.Work, work);
                 }
+                RECT tray;
+                if (foreground != IntPtr.Zero && MonitorFromWindow(foreground, 0) == monitor && GetWindowRect(t, out tray))
+                    FitForeground(foreground, edge, Reserve(edge, tray, work), work, now);
             }
         }
 
+        [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out RECT bounds, int size);
+        [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr p);
         delegate bool EnumProc(IntPtr h, IntPtr p);
         [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        internal static RECT? StaleWorkAreaBounds(Edge edge, RECT window, RECT frame, RECT reserved, RECT work, int tolerance)
+        {
+            if (Math.Abs(frame.L - reserved.L) > tolerance || Math.Abs(frame.T - reserved.T) > tolerance
+                || Math.Abs(frame.R - reserved.R) > tolerance || Math.Abs(frame.B - reserved.B) > tolerance)
+                return null;
+
+            // Match the old visible work area on all four sides. Move only the edge the
+            // taskbar freed and keep the invisible resize border used by native windows.
+            switch (edge)
+            {
+                case Edge.Top: if (frame.T - work.T <= tolerance) return null; window.T += work.T - frame.T; break;
+                case Edge.Bottom: if (work.B - frame.B <= tolerance) return null; window.B += work.B - frame.B; break;
+                case Edge.Left: if (frame.L - work.L <= tolerance) return null; window.L += work.L - frame.L; break;
+                case Edge.Right: if (work.R - frame.R <= tolerance) return null; window.R += work.R - frame.R; break;
+                default: return null;
+            }
+            return window;
+        }
+
+        internal static bool FitForeground(IntPtr hwnd, Edge edge, RECT reserved, RECT work, DateTime now)
+        {
+            const uint GW_OWNER = 4;
+            const long WS_POPUP = 0x80000000, WS_CAPTION = 0xC00000, WS_EX_TOOLWINDOW = 0x80;
+            if (!IsWindowVisible(hwnd) || Native.IsIconic(hwnd)
+                || (Native.GetLong(hwnd, -20).ToInt64() & WS_EX_TOOLWINDOW) != 0) return false;
+            bool maximized = IsZoomed(hwnd);
+            long style = Native.GetLong(hwnd, -16).ToInt64();
+            if (!maximized && (GetWindow(hwnd, GW_OWNER) != IntPtr.Zero
+                || (style & (WS_POPUP | WS_CAPTION)) != WS_POPUP)) return false;
+            string name = Native.Class(hwnd);
+            if (name == "Progman" || name == "WorkerW" || name == "Shell_TrayWnd" || name == "Shell_SecondaryTrayWnd") return false;
+
+            RECT window, frame;
+            if (!GetWindowRect(hwnd, out window)) return false;
+            bool hasFrame = DwmGetWindowAttribute(hwnd, 9, out frame, Marshal.SizeOf(typeof(RECT))) == 0;
+            if (!hasFrame) frame = window;
+            // Without DWM bounds, use the raw resize frame of a native maximized window.
+            var target = hasFrame || !maximized ? StaleWorkAreaBounds(edge, window, frame, reserved, work, 4)
+                : Shifted(edge, window, reserved, work);
+            if (!target.HasValue)
+            {
+                if (lastFitWindow == hwnd) lastFitWindow = IntPtr.Zero;
+                return false;
+            }
+            if (hwnd == lastFitWindow && now < nextFitAttempt) return false;
+            lastFitWindow = hwnd;
+            nextFitAttempt = now.AddSeconds(1);
+            if (!ResizeWindow(hwnd, target.Value)) return false;
+            if (!maximized)
+            {
+                uint process;
+                uint thread = GetWindowThreadProcessId(hwnd, out process);
+                foreach (var gone in expandedPopups.Keys.Where(h => !Native.IsWindow(h)).ToArray())
+                    expandedPopups.Remove(gone);
+                expandedPopups[hwnd] = new ExpandedPopup { Thread = thread, Process = process, Style = style, Before = window, Expanded = target.Value };
+            }
+            return true;
+        }
+
+        internal static void RestoreExpandedPopups()
+        {
+            foreach (var pair in expandedPopups)
+            {
+                IntPtr hwnd = pair.Key;
+                var placement = pair.Value;
+                uint process;
+                if (GetWindowThreadProcessId(hwnd, out process) != placement.Thread || process != placement.Process
+                    || Native.GetLong(hwnd, -16).ToInt64() != placement.Style) continue;
+                RECT bounds;
+                if (!GetWindowRect(hwnd, out bounds)) continue;
+                var fitted = placement.Expanded;
+                if (bounds.L == fitted.L && bounds.T == fitted.T && bounds.R == fitted.R && bounds.B == fitted.B)
+                    ResizeWindow(hwnd, placement.Before);
+            }
+            expandedPopups.Clear();
+        }
+
+        static bool ResizeWindow(IntPtr hwnd, RECT bounds)
+        {
+            const uint SWP_ASYNCWINDOWPOS = 0x4000, SWP_NOOWNERZORDER = 0x0200, SWP_NOACTIVATE = 0x0010, SWP_NOZORDER = 0x0004;
+            return SetWindowPos(hwnd, IntPtr.Zero, bounds.L, bounds.T, bounds.R - bounds.L, bounds.B - bounds.T,
+                SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_NOZORDER);
+        }
 
         static void ShiftMaximized(IntPtr monitor, Edge edge, RECT oldWork, RECT newWork)
         {
@@ -442,7 +548,7 @@ namespace ClearDesk
                 if (IsWindowVisible(h) && IsZoomed(h) && MonitorFromWindow(h, 2) == monitor && GetWindowRect(h, out r))
                 {
                     var n = Shifted(edge, r, oldWork, newWork);
-                    if (n.HasValue) SetWindowPos(h, IntPtr.Zero, n.Value.L, n.Value.T, n.Value.R - n.Value.L, n.Value.B - n.Value.T, 0x4000 | 0x0200 | 0x0010 | 0x0004);
+                    if (n.HasValue) ResizeWindow(h, n.Value);
                 }
                 return true;
             }, IntPtr.Zero);
@@ -470,6 +576,7 @@ namespace ClearDesk
                     if (w.T != mi.Work.T || w.B != mi.Work.B || w.L != mi.Work.L || w.R != mi.Work.R)
                         if (SpiRect(SPI_SETWORKAREA, 0, ref w, 0)) ShiftMaximized(MonitorFromWindow(t, 2), edge, mi.Work, w);
                 }
+                RestoreExpandedPopups();
             }
             catch { }
             finally { Undpi(old); }

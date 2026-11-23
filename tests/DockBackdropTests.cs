@@ -71,15 +71,15 @@ namespace ClearDesk
 
                 blue.Show();
                 IntPtr blueHwnd = new WindowInteropHelper(blue).Handle;
-                check(Native.SetWindowPos(blueHwnd, backdrop, bounds.L - 40, bounds.T - 140,
+                check(Native.SetWindowPos(blueHwnd, dock.TestBackdropHandle, bounds.L - 40, bounds.T - 140,
                     bounds.R - bounds.L + 80, 250, 0x10), "places the second app behind the Dock");
                 visibility.ApplyForeground(blueHwnd);
                 await Task.Delay(550);
                 Color blueSample = ReadSample(sampleX, sampleY);
                 Color blueWindow = ReadSample(sampleX, bounds.T - 75);
                 check(dock.BackdropRefreshCount == refreshes + 2 && dock.AnimatedFrames == frames
-                    && dock.TestBackdropHandle == backdrop,
-                    "switching to a second app refreshes the same backdrop without animating icons");
+                    && Native.IsWindowVisible(dock.TestBackdropHandle) && !Native.IsWindow(backdrop),
+                    "switching to a second app replaces the stale backdrop without animating icons");
                 check(redWindow.R > redWindow.B + 100 && blueWindow.B > blueWindow.R + 100,
                     "both colored fixture windows paint on screen (" + redWindow + ", " + blueWindow + ")");
                 check(redSample.R > redSample.B + 40 && blueSample.B > blueSample.R + 40,

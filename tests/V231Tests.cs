@@ -20,6 +20,7 @@ namespace ClearDesk
 
         internal static void Rules(Action<bool, string> check)
         {
+            TaskbarWorkAreaTests.Rules(check);
             check(new Version(SettingsWindow.Version) >= new Version("2.3.1"), "2.3.1 version string (or later)");
             check(!new Settings().HideSearch, "2.3.1 搜索 is shown by default");
 

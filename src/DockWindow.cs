@@ -320,12 +320,30 @@ namespace ClearDesk
                     backdropRefresh.Stop();
                     if (!IsVisible || WasClosed || (autoHide != null && autoHide.Hidden)) return;
                     plate.InvalidateVisual();
-                    SyncBackdrop();
-                    if (liveBackdrop != null && liveBackdrop.RefreshSample()) BackdropRefreshCount++;
+                    RefreshBackdropSample();
                 };
             }
             backdropRefresh.Stop();
             backdropRefresh.Start();
+        }
+
+        void RefreshBackdropSample()
+        {
+            if (liveBackdrop == null || !liveBackdrop.Shown || !liveBackdrop.Enabled) return;
+            // Some DWM updates leave the previous app's sample on the existing host even when its
+            // brush is reassigned. Prepare a fresh host, then swap it behind the same Dock plate.
+            var replacement = new DockBackdrop();
+            if (!replacement.Enabled)
+            {
+                replacement.Dispose();
+                return;
+            }
+            var previous = liveBackdrop;
+            liveBackdrop = replacement;
+            previous.Sync(IntPtr.Zero, Rect.Empty, 1, false);
+            previous.Dispose();
+            SyncBackdrop();
+            BackdropRefreshCount++;
         }
 
         internal int BackdropRefreshCount { get; private set; }

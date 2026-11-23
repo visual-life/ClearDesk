@@ -44,7 +44,6 @@ namespace ClearDesk
         CompositionGeometricClip clip;
         Native.RECT last;
         float lastRadius;
-        int samplePadding;
         bool shown, disposed;
         public float Radius = 25;
         public bool Enabled { get; private set; }
@@ -129,40 +128,14 @@ namespace ClearDesk
             bool sizeChanged = last.R - last.L != width || last.B - last.T != height || radius != lastRadius;
             if (sizeChanged)
             {
-                samplePadding = 0;
                 visual.Size = geometry.Size = new Vector2(width, height);
                 geometry.CornerRadius = new Vector2(radius);
             }
             if (!shown || sizeChanged || last.L != x || last.T != y || GetWindow(dock, 2) != Handle)
-                Native.SetWindowPos(Handle, dock, x, y, width + samplePadding, height, 0x10 | 0x40);
+                Native.SetWindowPos(Handle, dock, x, y, width, height, 0x10 | 0x40);
             last = new Native.RECT { L = x, T = y, R = x + width, B = y + height };
             lastRadius = radius;
             shown = true;
-        }
-
-        internal bool RefreshSample()
-        {
-            if (disposed || !Enabled || !shown) return false;
-
-            // A foreground change can leave DWM displaying the old sample at identical host bounds.
-            // Resize only the unused edge of the native host, as on hover, without changing the
-            // clipped sprite, the Dock's layout, or either window's z-order.
-            const uint SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10;
-            int padding = 1 - samplePadding;
-            if (!Native.SetWindowPos(Handle, IntPtr.Zero, 0, 0, last.R - last.L + padding,
-                last.B - last.T, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) return false;
-            samplePadding = padding;
-            try
-            {
-                var replacement = compositor.CreateHostBackdropBrush();
-                try { visual.Brush = replacement; }
-                catch { replacement.Dispose(); throw; }
-                var previous = brush;
-                brush = replacement;
-                previous.Dispose();
-            }
-            catch (Exception error) { Program.Log(error); }
-            return true;
         }
 
         /// <summary>2.2.2: keeps the blur window directly below its owner. Called from the owner's WM_WINDOWPOSCHANGED, so a z-order change (activation,
