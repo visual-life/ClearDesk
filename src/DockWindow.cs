@@ -24,8 +24,8 @@ namespace ClearDesk
         List<DockEntry> entries = new List<DockEntry>();
         Border plate, separator, marker;
         GlassPane dockGlass;
-        DockBackdrop liveBackdrop;
-        DispatcherTimer backdropRefresh;
+        DockBackdrop liveBackdrop, pendingBackdrop;
+        DispatcherTimer backdropRefresh, backdropSwap;
         DesktopVisibility desktop;
         double cursor = double.NaN, baseSize;
         bool rendering, dragging, rebuilding;
@@ -102,8 +102,7 @@ namespace ClearDesk
             MouseLeave += delegate
             {
                 if (Program.Rendering) return;
-                cursor = double.NaN;
-                StartFrames();
+                EaseHoverOut();
             };
             ContextMenu.Items.Insert(0, Item("打开桌面启动台", Program.Launchpad));
             running.Changed += delegate { ScheduleRebuild(); };
@@ -121,6 +120,7 @@ namespace ClearDesk
                 if (attentionTimer != null) attentionTimer.Stop();
                 if (rebuildTimer != null) rebuildTimer.Stop();
                 if (backdropRefresh != null) backdropRefresh.Stop();
+                CancelBackdropSwap();
                 StopFrames();
                 FinishTransition(false);
                 running.Dispose();
@@ -137,7 +137,15 @@ namespace ClearDesk
             Loaded += delegate
             {
                 var hs = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle);
-                if (hs != null) hs.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) => { if (m == 0x47 && liveBackdrop != null) liveBackdrop.Reorder(h); return IntPtr.Zero; });
+                if (hs != null) hs.AddHook((IntPtr h, int m, IntPtr w, IntPtr l, ref bool handled) =>
+                {
+                    if (m == 0x47 && liveBackdrop != null)
+                    {
+                        liveBackdrop.Reorder(h);
+                        pendingBackdrop?.Reorder(liveBackdrop.Handle);
+                    }
+                    return IntPtr.Zero;
+                });
                 Rebuild();
                 UpdateBackdrop();
                 if (!Program.Rendering)
@@ -158,10 +166,7 @@ namespace ClearDesk
                 if (IsVisible) RequestBackdropRefresh();
                 else if (backdropRefresh != null) backdropRefresh.Stop();
             };
-            Deactivated += delegate
-            {
-                ResetMagnification();
-            };
+            Deactivated += delegate { EaseHoverOut(); };
             SizeChanged += delegate
             {
                 Root.Clip = null;
@@ -192,8 +197,7 @@ namespace ClearDesk
         DispatcherTimer rebuildTimer; string builtSignature; internal int RebuildCount, SkippedRebuilds;
         internal static string Signature(IEnumerable<DockEntry> list)
         {
-            return string.Join("|", list.Select(e => (e.PinPath != null ? "P:" + e.PinPath : "R:" + (e.Identity == null ? "" : e.Identity.Key))
-                + (e.Running?.InTray == true ? "~" : e.IsRunning ? "+" : "-")));
+            return string.Join("|", list.Select(ItemKey));
         }
         void ScheduleRebuild()
         {
@@ -208,9 +212,30 @@ namespace ClearDesk
         internal bool RebuildIfChanged()
         {
             if (WasClosed || dragging || buttons.Any(b => b.ContextMenu != null && b.ContextMenu.IsOpen)) return false;
-            string now = Signature(running.Entries(Program.S.Pins));
-            if (now == builtSignature) { SkippedRebuilds++; return false; }
+            var snapshot = running.Entries(Program.S.Pins);
+            if (Signature(snapshot) == builtSignature)
+            {
+                RefreshEntryState(snapshot);
+                SkippedRebuilds++;
+                return false;
+            }
             Rebuild(); return true;
+        }
+
+        void RefreshEntryState(List<DockEntry> snapshot)
+        {
+            for (int i = 0; i < entries.Count; i++)
+            {
+                var entry = entries[i];
+                var latest = snapshot[i].Running;
+                if (ReferenceEquals(entry.Running, latest)) continue;
+                var before = entry.Running?.Windows;
+                var after = latest?.Windows;
+                entry.Running = latest;
+                if (!transitioning) dots[i + 1].Visibility = entry.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+                if ((before?.Count > 1 || after?.Count > 1) && (before == null || after == null || !before.SequenceEqual(after)))
+                    BindEntryMenu(buttons[i + 1], entry);
+            }
         }
 
         DockAutoHide autoHide;
@@ -297,6 +322,7 @@ namespace ClearDesk
                 liveBackdrop = new DockBackdrop();
             if (State.Material != "frosted" && liveBackdrop != null)
             {
+                CancelBackdropSwap();
                 liveBackdrop.Dispose();
                 liveBackdrop = null;
             }
@@ -309,17 +335,21 @@ namespace ClearDesk
             var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             if (!IsVisible || plate.ActualWidth < 1 || plate.ActualHeight < 1)
             {
+                CancelBackdropSwap();
                 liveBackdrop.Sync(handle, Rect.Empty, 1, false);
                 return;
             }
             var topLeft = plate.PointToScreen(new Point());
             var bottomRight = plate.PointToScreen(new Point(plate.ActualWidth, plate.ActualHeight));
-            liveBackdrop.Sync(handle, new Rect(topLeft, bottomRight), (bottomRight.X - topLeft.X) / plate.ActualWidth, true);
+            var bounds = new Rect(topLeft, bottomRight);
+            double scale = bounds.Width / plate.ActualWidth;
+            liveBackdrop.Sync(handle, bounds, scale, true);
+            pendingBackdrop?.Sync(liveBackdrop.Handle, bounds, scale, true);
         }
 
         internal void RequestBackdropRefresh()
         {
-            if (!IsLoaded || !IsVisible || WasClosed) return;
+            if (!IsLoaded || !IsVisible || WasClosed || liveBackdrop == null) return;
             if (backdropRefresh == null)
             {
                 backdropRefresh = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(160) };
@@ -327,7 +357,6 @@ namespace ClearDesk
                 {
                     backdropRefresh.Stop();
                     if (!IsVisible || WasClosed || (autoHide != null && autoHide.Hidden)) return;
-                    plate.InvalidateVisual();
                     RefreshBackdropSample();
                 };
             }
@@ -337,25 +366,55 @@ namespace ClearDesk
 
         void RefreshBackdropSample()
         {
-            if (liveBackdrop == null || !liveBackdrop.Shown || !liveBackdrop.Enabled) return;
-            // Some DWM updates leave the previous app's sample on the existing host even when its
-            // brush is reassigned. Prepare a fresh host, then swap it behind the same Dock plate.
+            if (liveBackdrop == null || !liveBackdrop.Shown || !liveBackdrop.Enabled || pendingBackdrop != null) return;
+            // Show the replacement underneath the current host. It samples the real desktop
+            // without a frame in which the Dock plate has no native background.
             var replacement = new DockBackdrop();
             if (!replacement.Enabled)
             {
                 replacement.Dispose();
                 return;
             }
+            pendingBackdrop = replacement;
+            SyncBackdrop();
+            if (pendingBackdrop == null) return;
+            if (backdropSwap == null)
+            {
+                backdropSwap = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(96) };
+                backdropSwap.Tick += delegate { CompleteBackdropSwap(); };
+            }
+            backdropSwap.Start();
+        }
+
+        void CompleteBackdropSwap()
+        {
+            backdropSwap.Stop();
+            if (pendingBackdrop == null) return;
+            if (WasClosed || !IsVisible || liveBackdrop == null || !Native.IsWindowVisible(pendingBackdrop.Handle)
+                || (autoHide != null && autoHide.Hidden))
+            {
+                CancelBackdropSwap();
+                return;
+            }
             var previous = liveBackdrop;
-            liveBackdrop = replacement;
-            previous.Sync(IntPtr.Zero, Rect.Empty, 1, false);
+            liveBackdrop = pendingBackdrop;
+            pendingBackdrop = null;
             previous.Dispose();
             SyncBackdrop();
             BackdropRefreshCount++;
         }
 
+        void CancelBackdropSwap()
+        {
+            backdropSwap?.Stop();
+            pendingBackdrop?.Dispose();
+            pendingBackdrop = null;
+        }
+
         internal int BackdropRefreshCount { get; private set; }
         internal IntPtr TestBackdropHandle { get { return liveBackdrop == null ? IntPtr.Zero : liveBackdrop.Handle; } }
+        internal IntPtr TestPendingBackdropHandle { get { return pendingBackdrop == null ? IntPtr.Zero : pendingBackdrop.Handle; } }
+        internal bool TestPendingBehindCurrent { get { return pendingBackdrop != null && pendingBackdrop.IsDirectlyBelow(liveBackdrop.Handle); } }
         internal bool TestLiveFrost { get { return liveBackdrop != null && liveBackdrop.Enabled; } }
 
         // ---- 2.3.3: attention (an app flashes its taskbar button)
@@ -526,11 +585,7 @@ namespace ClearDesk
                     var request = entry.IconRequest(); string shownName = entry.Title;
                     IconCache.BindWith(image, request.CacheKey, () => { string how; return AppIcons.Resolve(request, out how); }, shownName);
                 }
-                b.ContextMenu = EntryMenu(entry);
-                b.ContextMenu.Closed += delegate
-                {
-                    Dispatcher.BeginInvoke(new Action(Rebuild));
-                };
+                BindEntryMenu(b, entry);
             }
 
             b.PreviewMouseLeftButtonDown += delegate (object sender, MouseButtonEventArgs e)
@@ -546,13 +601,12 @@ namespace ClearDesk
             {
                 if (dragging)
                     return;
-                FinishTransition(true);
-                ResetMagnification();
+                EaseHoverOut();
                 if (entry == null)
                     Program.Launchpad();
                 else
                     running.ActivateOrLaunch(entry);
-                if (!IsVisible)
+                if (!IsVisible || transitioning)
                     return;
                 var bounce = new TranslateTransform();
                 b.RenderTransform = bounce;
@@ -593,6 +647,15 @@ namespace ClearDesk
         }
 
         internal ContextMenu TestEntryMenu(DockEntry entry) { return EntryMenu(entry); }
+        void BindEntryMenu(Button button, DockEntry entry)
+        {
+            button.ContextMenu = EntryMenu(entry);
+            button.ContextMenu.Closed += delegate
+            {
+                Dispatcher.BeginInvoke(new Action(() => RebuildIfChanged()));
+            };
+        }
+
         ContextMenu EntryMenu(DockEntry entry)
         {
             var menu = new ContextMenu();
@@ -815,6 +878,13 @@ namespace ClearDesk
                 CompositionTarget.Rendering -= Render;
                 rendering = false;
             }
+        }
+
+        internal void EaseHoverOut()
+        {
+            if (double.IsNaN(cursor)) return;
+            cursor = double.NaN;
+            StartFrames();
         }
 
         internal void ResetMagnification()

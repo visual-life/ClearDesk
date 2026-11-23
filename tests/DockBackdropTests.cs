@@ -38,6 +38,12 @@ namespace ClearDesk
             }
         }
 
+        static async Task<IntPtr> WaitForStaging(DockWindow dock)
+        {
+            for (int i = 0; i < 35 && dock.TestPendingBackdropHandle == IntPtr.Zero; i++) await Task.Delay(12);
+            return dock.TestPendingBackdropHandle;
+        }
+
         internal static async Task Run(DockWindow dock, Action<bool, string> check)
         {
             string material = dock.TestState.Material;
@@ -73,8 +79,19 @@ namespace ClearDesk
                 IntPtr blueHwnd = new WindowInteropHelper(blue).Handle;
                 check(Native.SetWindowPos(blueHwnd, dock.TestBackdropHandle, bounds.L - 40, bounds.T - 140,
                     bounds.R - bounds.L + 80, 250, 0x10), "places the second app behind the Dock");
+                IntPtr oldBackdrop = dock.TestBackdropHandle;
                 visibility.ApplyForeground(blueHwnd);
-                await Task.Delay(550);
+                IntPtr staged = await WaitForStaging(dock);
+                Native.RECT stagedBounds, oldBounds;
+                bool coversPlate = Native.GetWindowRect(oldBackdrop, out oldBounds)
+                    && Native.GetWindowRect(staged, out stagedBounds)
+                    && stagedBounds.L == oldBounds.L && stagedBounds.T == oldBounds.T
+                    && stagedBounds.R == oldBounds.R && stagedBounds.B == oldBounds.B;
+                check(staged != IntPtr.Zero && staged != oldBackdrop && dock.TestBackdropHandle == oldBackdrop
+                    && Native.IsWindowVisible(oldBackdrop) && Native.IsWindowVisible(staged)
+                    && dock.TestPendingBehindCurrent && coversPlate,
+                    "the current Dock backdrop covers the plate while its replacement prepares directly behind it");
+                await Task.Delay(400);
                 Color blueSample = ReadSample(sampleX, sampleY);
                 Color blueWindow = ReadSample(sampleX, bounds.T - 75);
                 check(dock.BackdropRefreshCount == refreshes + 2 && dock.AnimatedFrames == frames
@@ -96,6 +113,12 @@ namespace ClearDesk
                 await Task.Delay(350);
                 check(dock.BackdropRefreshCount == refreshes + 3,
                     "polling an unchanged foreground does not repaint the backdrop");
+
+                visibility.ApplyForeground(redHwnd, true);
+                IntPtr pending = await WaitForStaging(dock);
+                dock.TestMaterial("liquid");
+                check(pending != IntPtr.Zero && !Native.IsWindow(pending) && dock.TestBackdropHandle == IntPtr.Zero,
+                    "switching the material cancels a pending backdrop and releases both native hosts");
             }
             finally
             {

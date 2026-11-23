@@ -43,6 +43,23 @@ namespace ClearDesk
                 };
                 dock.Rebuild();
                 await Task.Delay(350);
+                var firstButton = dock.TestButton(1);
+                var resident = new RunningApp { Identity = first.Identity, Title = first.Title, InTray = true };
+                monitor.Apps[0] = resident;
+                bool hidWithoutRebuild = !dock.RebuildIfChanged() && ReferenceEquals(dock.TestButton(1), firstButton)
+                    && ReferenceEquals(dock.TestEntries[0].Running, resident);
+                monitor.Apps[0] = first;
+                check(hidWithoutRebuild && !dock.RebuildIfChanged() && ReferenceEquals(dock.TestButton(1), firstButton)
+                    && ReferenceEquals(dock.TestEntries[0].Running, first),
+                    "a tray app is hidden and restored without recreating its Dock icon");
+                dock.TestHover(.5);
+                await Task.Delay(350);
+                double hovered = dock.TestMaxScale;
+                dock.EaseHoverOut();
+                check(hovered > 1.15 && Math.Abs(dock.TestMaxScale - hovered) < .01,
+                    "switching away from the Dock preserves the hovered icon size at the start of the transition");
+                await Task.Delay(420);
+                check(Math.Abs(dock.TestMaxScale - 1) < .01, "hovered icons shrink smoothly back to their default size");
                 double before = dock.TestPlateWidth;
                 monitor.Apps.Remove(second);
                 dock.Rebuild();
@@ -74,6 +91,14 @@ namespace ClearDesk
                 int frames = dock.AnimatedFrames;
                 await Task.Delay(250);
                 check(dock.AnimatedFrames == frames, "settled Dock transition leaves no ongoing hover render loop");
+                Program.S.Pins = new List<string> { first.Identity.Exe };
+                monitor.Apps = new List<RunningApp>();
+                dock.Rebuild();
+                await Task.Delay(350);
+                var pinButton = dock.TestButton(1);
+                monitor.Apps.Add(first);
+                check(!dock.RebuildIfChanged() && ReferenceEquals(pinButton, dock.TestButton(1)) && dock.TestEntries[0].IsRunning,
+                    "launching a fixed app updates the running mark without rebuilding the Dock");
             }
             finally
             {

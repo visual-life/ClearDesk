@@ -2,7 +2,7 @@
 
 # ClearDesk
 
-轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.4.1**，维护者 [visual-life](https://github.com/visual-life)。
+轻量 Windows 桌面整理工具，使用 C#、WPF 和 .NET Framework 4.8 构建。当前源码版本 **2.4.2**，维护者 [visual-life](https://github.com/visual-life)。
 
 <img src="docs/images/overview.gif" width="900" alt="ClearDesk 2.0.2 桌面总览：收纳格、音乐、天气、时钟组件与 Dock">
 
@@ -23,6 +23,7 @@
 
 | 版本 | 日期 | 主要变化 |
 | --- | --- | --- |
+| **2.4.2** | 2026-11-23 | 修复打开、切换和从托盘唤回应用时 Dock 的短暂闪动 |
 | **2.4.1** | 2026-11-23 | 从 Dock 优先唤回已收进托盘的 QQ 和微信，避免再次启动时弹出新账号登录 |
 | **2.4.0** | 2026-11-22 | 修复 Dock 启动和切换应用时的卡顿、误显示隐藏窗口及重复启动 |
 | **2.3.9** | 2026-11-22 | 修复隐藏任务栏后的最大化窗口可能留下屏幕边缘空条 |
@@ -60,7 +61,7 @@
 
 ## 下载
 
-使用 **2.4.1** 发布包时，完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹、`taskbar-factory.zip` 和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`。已有设置会继续使用。需要 Windows 和 .NET Framework 4.8，一级右键菜单需要 Windows 11。
+使用 **2.4.2** 发布包时，完整解压后运行 `ClearDesk.exe`。升级前退出旧版本，保留包内的 `taskbar` 文件夹、`taskbar-factory.zip` 和 `ClearDeskShell.*`、`ClearDeskSign.exe`、`enable-menu.ps1`、`disable-menu.ps1`。已有设置会继续使用。需要 Windows 和 .NET Framework 4.8，一级右键菜单需要 Windows 11。
 
 发行包见 [Releases](https://github.com/visual-life/ClearDesk/releases)。历史版本：[1.9.1](https://github.com/visual-life/ClearDesk/releases/tag/v1.9.1) · [1.8.2](https://github.com/visual-life/ClearDesk/releases/tag/v1.8.2)。
 

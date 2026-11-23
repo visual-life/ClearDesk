@@ -556,9 +556,10 @@ namespace ClearDesk
 
         internal async void ActivateWindow(RunningApp app, IntPtr window)
         {
+            if (app == null) return;
             try
             {
-                var result = await Task.Run(() => !disposed && MatchesWindow(app, window, WinOps.Instance)
+                var result = await Task.Run(() => !disposed && app.Windows.Contains(window) && MatchesWindow(app, window, WinOps.Instance)
                     ? DockRestorer.Restore(window, WinOps.Instance, Thread.Sleep, null)
                     : DockRestorer.Result.Gone);
                 if (!disposed && result == DockRestorer.Result.NotResponding) ActivationNotice?.Invoke("应用暂未响应");
