@@ -177,11 +177,13 @@ namespace ClearDesk
             return set;
         }
 
-        internal static List<NotifyEntry> ReadEntries()
+        internal static List<NotifyEntry> ReadEntries() { return ReadEntries(false); }
+
+        internal static List<NotifyEntry> ReadEntries(bool refresh)
         {
             lock (Report)
             {
-                if (cached != null && (DateTime.UtcNow - cachedAt).TotalSeconds < 30) return cached;
+                if (!refresh && cached != null && (DateTime.UtcNow - cachedAt).TotalSeconds < 30) return cached;
             }
             var list = new List<NotifyEntry>();
             try

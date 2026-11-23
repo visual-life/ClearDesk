@@ -192,7 +192,8 @@ namespace ClearDesk
         DispatcherTimer rebuildTimer; string builtSignature; internal int RebuildCount, SkippedRebuilds;
         internal static string Signature(IEnumerable<DockEntry> list)
         {
-            return string.Join("|", list.Select(e => (e.PinPath != null ? "P:" + e.PinPath : "R:" + (e.Identity == null ? "" : e.Identity.Key)) + (e.IsRunning ? "+" : "-")));
+            return string.Join("|", list.Select(e => (e.PinPath != null ? "P:" + e.PinPath : "R:" + (e.Identity == null ? "" : e.Identity.Key))
+                + (e.Running?.InTray == true ? "~" : e.IsRunning ? "+" : "-")));
         }
         void ScheduleRebuild()
         {
@@ -673,12 +674,12 @@ namespace ClearDesk
                     MessageBox.Show("未找到可关闭的窗口，或应用未接受关闭请求。", "ClearDesk");
             });
             close.ToolTip = "正常关闭该应用的所有窗口；未保存内容由应用自行提示。";
-            close.IsEnabled = entry.IsRunning;
+            close.IsEnabled = entry.Running?.Windows.Count > 0;
             menu.Opened += async delegate
             {
-                close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity));
+                close.IsEnabled = running.Apps.Any(a => a.Windows.Count > 0 && AppIdentity.Matches(a.Identity, entry.Identity));
                 await running.RequestRefresh();
-                if (menu.IsOpen && !WasClosed) close.IsEnabled = running.Apps.Any(a => AppIdentity.Matches(a.Identity, entry.Identity));
+                if (menu.IsOpen && !WasClosed) close.IsEnabled = running.Apps.Any(a => a.Windows.Count > 0 && AppIdentity.Matches(a.Identity, entry.Identity));
             };
             if (entry.Running != null && entry.Running.Windows.Count > 1)
             {

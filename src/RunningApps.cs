@@ -44,6 +44,7 @@ namespace ClearDesk
         public readonly List<IntPtr> Windows = new List<IntPtr>();
         public readonly Dictionary<IntPtr, uint> WindowProcesses = new Dictionary<IntPtr, uint>();
         public string Title;
+        public bool InTray;
         public IntPtr Preferred;
         public readonly List<string> AncestorExes = new List<string>();   // executables that started this app's process (launcher → client)
     }
@@ -65,7 +66,7 @@ namespace ClearDesk
         {
             get
             {
-                return Running != null && Running.Windows.Count > 0;
+                return Running != null && (Running.Windows.Count > 0 || Running.InTray);
             }
         }
 
@@ -115,6 +116,7 @@ namespace ClearDesk
         readonly Dictionary<string, DateTime> launches = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, IntPtr> recent = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
         readonly List<string> order = new List<string>();
+        readonly Dictionary<string, RunningApp> trayResidents = new Dictionary<string, RunningApp>(StringComparer.OrdinalIgnoreCase);
         sealed class WindowMetadata { internal uint Pid; internal string AppId; internal DateTime Expires; }
         readonly Dictionary<IntPtr, WindowMetadata> windowMetadata = new Dictionary<IntPtr, WindowMetadata>();
         static readonly Dictionary<string, string> descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -164,6 +166,7 @@ namespace ClearDesk
         readonly HashSet<string> activating = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         internal IWindowOps Ops = WinOps.Instance;
         internal Func<string, Task> OpenLaunchItem = path => Program.OpenItemAsync(path);
+        internal Func<DockEntry, AppIdentity, TrayWakeResult> WakeTray = DockTrayWake.TryWake;
         internal Func<uint, List<string>> AncestorLookup = pid => ProcessTree.AncestorExes(pid, 4);
         List<string> AncestorsOf(uint pid)
         {
@@ -311,6 +314,7 @@ namespace ClearDesk
             }, IntPtr.Zero);
             foreach (var handle in windowMetadata.Keys.Where(h => !seen.Contains(h)).ToArray()) windowMetadata.Remove(handle);
             foreach (var handle in hosted.Keys.Where(h => !seen.Contains(h)).ToArray()) hosted.Remove(handle);
+            KeepTrayResidents(groups, trayResidents, DockTrayWake.IsProcess);
             order.RemoveAll(k => !groups.ContainsKey(k));
             foreach (string key in groups.Keys)
                 if (!order.Contains(key))
@@ -319,12 +323,26 @@ namespace ClearDesk
             foreach (var app in snapshot)
             {
                 IntPtr preferred;
-                app.Preferred = recent.TryGetValue(app.Identity.Key, out preferred) && app.Windows.Contains(preferred) ? preferred : app.Windows[0];
+                app.Preferred = recent.TryGetValue(app.Identity.Key, out preferred) && app.Windows.Contains(preferred) ? preferred : app.Windows.FirstOrDefault();
             }
 
             foreach (var key in recent.Keys.Where(k => !groups.ContainsKey(k)).ToArray())
                 recent.Remove(key);
             return snapshot;
+        }
+
+        internal static void KeepTrayResidents(Dictionary<string, RunningApp> groups, Dictionary<string, RunningApp> residents,
+            Func<uint, string, bool> isProcess)
+        {
+            foreach (var app in groups.Values.Where(a => DockTrayWake.IsKnown(a.Identity)))
+                residents[app.Identity.Key] = app;
+            foreach (var key in residents.Keys.Where(k => !groups.ContainsKey(k)).ToArray())
+            {
+                var resident = residents[key];
+                var pidStillThere = resident.WindowProcesses.Values.Distinct().Any(pid => isProcess(pid, resident.Identity.Exe));
+                if (!pidStillThere) { residents.Remove(key); continue; }
+                groups.Add(key, new RunningApp { Identity = resident.Identity, Title = resident.Title, InTray = true });
+            }
         }
 
         void ApplySnapshot(List<RunningApp> snapshot)
@@ -452,7 +470,15 @@ namespace ClearDesk
                     if (!disposed && !ReferenceEquals(app, latest)) result = await TryWindow(latest, previous, ops);
                 }
                 if (disposed) return;
-                if (result == DockRestorer.Result.Gone) await Launch(entry);
+                if (result == DockRestorer.Result.Gone)
+                {
+                    var knownApp = FindApp(entry.Identity, null) ?? app;
+                    var wake = await Task.Run(() => disposed ? TrayWakeResult.Unavailable : WakeTray(entry, knownApp?.Identity));
+                    if (disposed) return;
+                    if (wake == TrayWakeResult.NotApplicable) await Launch(entry);
+                    else if (wake == TrayWakeResult.Unavailable) ActivationNotice?.Invoke("应用已在后台运行，未能唤回托盘窗口");
+                    else _ = RequestRefresh();
+                }
                 else if (result == DockRestorer.Result.NotResponding) ActivationNotice?.Invoke("应用暂未响应");
             }
             catch (Exception e) { Program.Log(e); }

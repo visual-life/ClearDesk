@@ -83,7 +83,7 @@ namespace ClearDesk
 
         static bool IsAppIcon(AutomationElement e) { try { return e.Current.AutomationId == "NotifyItemIcon"; } catch { return false; } }
 
-        static AutomationElement Chevron(AutomationElement tray)
+        static AutomationElement Chevron(AutomationElement tray, bool allowFallback = true)
         {
             AutomationElement first = null;
             foreach (var b in Buttons(tray))
@@ -93,7 +93,7 @@ namespace ClearDesk
                 if (first == null) first = b;
                 if (name.IndexOf("隐藏") >= 0 || name.IndexOf("hidden", StringComparison.OrdinalIgnoreCase) >= 0) return b;
             }
-            return first;
+            return allowFallback ? first : null;
         }
 
         /// <summary>Closes the overflow flyout if it is open (tests leave nothing open).</summary>
@@ -200,11 +200,12 @@ namespace ClearDesk
             }
         }
 
-        static AutomationElement OpenOverflow(AutomationElement tray, out bool openedByUs, bool invisible)
+        static AutomationElement OpenOverflow(AutomationElement tray, out bool openedByUs, bool invisible,
+            int polls = 80, bool dock = false)
         {
             openedByUs = false;
             var w = OverflowWindow(); if (w != null) return w;
-            var chevron = Chevron(tray);
+            var chevron = Chevron(tray, !dock);
             if (chevron == null) { LastProblem = "找不到“显示隐藏的图标”按钮"; return null; }
             // 2.3.5: the flyout is drawn normally (the 2.3.4 empty-region trick is gone)
             try
@@ -214,7 +215,7 @@ namespace ClearDesk
                 openedByUs = true; OverflowOpens++;
                 // 2.3.6: wait until the flyout has icons AND their number has stopped changing (3 equal looks in a row), instead of taking the first look
                 int last = -1, same = 0;
-                for (int i = 0; i < 80; i++)
+                for (int i = 0; i < polls; i++)
                 {
                     Thread.Sleep(50);
                     w = OverflowWindow();
@@ -226,21 +227,145 @@ namespace ClearDesk
                 }
                 if (w != null && last > 0) return w;          // still changing after 4 s: take what is there
                 LastProblem = "隐藏的图标面板没有出现";
-                if (w != null || OverflowWindow() != null) CloseOverflow(tray);
+                if (w != null || OverflowWindow() != null) CloseOverflow(tray, dock);
                 return null;
             }
             finally { }
         }
 
-        static void CloseOverflow(AutomationElement tray)
+        static void CloseOverflow(AutomationElement tray, bool dock = false)
         {
             if (OverflowWindow() != null)
             {
-                var chevron = Chevron(tray);
+                var chevron = Chevron(tray, !dock);
                 try { if (chevron != null) ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); } catch { }
-                for (int i = 0; i < 30 && OverflowWindow() != null; i++) Thread.Sleep(50);
+                for (int i = 0; i < (dock ? 8 : 30) && OverflowWindow() != null; i++) Thread.Sleep(50);
             }
-            UiaCom.ResetFlyoutNow();                 // 2.3.5: only heals a leftover empty region (none is made any more)
+            if (!dock) UiaCom.ResetFlyoutNow();      // 2.3.5: only heals a leftover empty region (none is made any more)
+        }
+
+        internal static TrayWakeResult WakeDockApp(DockTrayWake.Target target, List<NotifyEntry> records)
+        {
+            if (!Monitor.TryEnter(gate, 300)) return TrayWakeResult.Unavailable;
+            string previousProblem = LastProblem;
+            AutomationElement tray = null;
+            bool opened = false;
+            try
+            {
+                tray = Tray();
+                if (tray == null) return TrayWakeResult.NotApplicable;
+                var visible = DockIcons(tray, target, records);
+                if (visible.Count == 0 && TopTaskbar.Active && records.Any(r => r.Promoted && r.Snapshot != null && target.Owns(r.Exe)))
+                {
+                    TopTaskbar.Hold(1800);
+                    Thread.Sleep(330);
+                    visible = DockIcons(tray, target, records);
+                }
+                if (visible.Count > 1) return TrayWakeResult.Unavailable;
+                if (visible.Count == 1) return InvokeDockIcon(visible[0], tray, target, records, false, ref opened);
+
+                var flyout = OpenOverflow(tray, out opened, false, 30, dock: true);
+                if (flyout == null) return TrayWakeResult.NotApplicable;
+                var hidden = DockIcons(flyout, target, records);
+                if (hidden.Count == 0) return TrayWakeResult.NotApplicable;
+                if (hidden.Count > 1) return TrayWakeResult.Unavailable;
+                return InvokeDockIcon(hidden[0], tray, target, records, true, ref opened);
+            }
+            catch (Exception e) { Program.Log(e); return TrayWakeResult.Unavailable; }
+            finally
+            {
+                try { if (opened && tray != null) CloseOverflow(tray, dock: true); }
+                finally { LastProblem = previousProblem; Monitor.Exit(gate); }
+            }
+        }
+
+        static List<AutomationElement> DockIcons(AutomationElement root, DockTrayWake.Target target, List<NotifyEntry> records)
+        {
+            var matches = new List<AutomationElement>();
+            bool canCompare = records.Any(r => r.Snapshot != null && target.Owns(r.Exe));
+            foreach (var element in Icons(root))
+            {
+                string name;
+                try { name = element.Current.Name ?? ""; } catch { continue; }
+                var icon = new RawIcon { Full = name };
+                if (DockTrayWake.MatchesIcon(target, icon, records))
+                {
+                    matches.Add(element);
+                    continue;
+                }
+                if (!canCompare || !HitsItem(element)) continue;
+                icon.Png = Capture(element);
+                if (DockTrayWake.MatchesIcon(target, icon, records)) matches.Add(element);
+            }
+            return matches;
+        }
+
+        static TrayWakeResult InvokeDockIcon(AutomationElement element, AutomationElement tray, DockTrayWake.Target target,
+            List<NotifyEntry> records, bool inFlyout, ref bool opened)
+        {
+            if (!target.IsAlive()) return TrayWakeResult.NotApplicable;
+            if (DockTrayWake.VisibleWindow(target)) return TrayWakeResult.Woken;
+            var input = new Native.LASTINPUT { size = (uint)Marshal.SizeOf(typeof(Native.LASTINPUT)) };
+            bool tracked = Native.GetLastInputInfo(ref input);
+            uint clickedAt = input.time;
+            try
+            {
+                object pattern;
+                if (element.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
+                {
+                    ((InvokePattern)pattern).Invoke();
+                    if (DockTrayWake.WaitForWindow(target, 8)) return TrayWakeResult.Woken;
+                }
+            }
+            catch (ElementNotAvailableException) { if (DockTrayWake.WaitForWindow(target, 5)) return TrayWakeResult.Woken; }
+            catch (InvalidOperationException) { }
+
+            // Some apps only reopen on the tray's native double-click. Recheck the exact
+            // element before each click, and leave the pointer untouched if the user is using it.
+            if (tracked && Native.GetLastInputInfo(ref input) && input.time == clickedAt && target.IsAlive())
+            {
+                if (!inFlyout && TopTaskbar.Active && !HitsItem(element))
+                {
+                    TopTaskbar.Hold(1500);
+                    Thread.Sleep(320);
+                }
+                AutomationElement root = tray;
+                if (inFlyout)
+                {
+                    bool reopened;
+                    root = OpenOverflow(tray, out reopened, false, 20, dock: true);
+                    opened |= reopened;
+                }
+                var current = root == null ? new List<AutomationElement>() : DockIcons(root, target, records);
+                if (Native.GetLastInputInfo(ref input) && input.time == clickedAt && !DockTrayWake.VisibleWindow(target))
+                    if (current.Count == 1) DoubleClickDockIcon(current[0], target);
+            }
+            return DockTrayWake.WaitForWindow(target, 10) ? TrayWakeResult.Woken : TrayWakeResult.Unavailable;
+        }
+
+        static void DoubleClickDockIcon(AutomationElement element, DockTrayWake.Target target)
+        {
+            if (!HitsItem(element)) return;
+            var bounds = element.Current.BoundingRectangle;
+            int x = (int)(bounds.X + bounds.Width / 2), y = (int)(bounds.Y + bounds.Height / 2);
+            POINT original, current;
+            if (!GetCursorPos(out original) || !SetCursorPos(x, y)) return;
+            try
+            {
+                for (int click = 0; click < 2; click++)
+                {
+                    if (!GetCursorPos(out current) || current.X != x || current.Y != y || !HitsItem(element)
+                        || element.Current.BoundingRectangle != bounds || !target.IsAlive() || DockTrayWake.VisibleWindow(target)) break;
+                    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+                    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+                    if (click == 0) Thread.Sleep(60);
+                }
+            }
+            finally
+            {
+                if (GetCursorPos(out current) && current.X == x && current.Y == y)
+                    SetCursorPos(original.X, original.Y);
+            }
         }
 
         /// <summary>2.3.6: finds the icon by (name, ordinal): the n-th icon whose cleaned name is item.Raw (empty names included); when the order changed, the first with that name.</summary>
