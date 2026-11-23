@@ -13,7 +13,7 @@ namespace ClearDesk
 {
     internal sealed class SettingsWindow : Window
     {
-        internal const string Version = "2.3.5";
+        internal const string Version = "2.3.6";
         readonly Settings state = Program.S;
         readonly List<Page> pages = new List<Page>();
         readonly StackPanel content = new StackPanel();

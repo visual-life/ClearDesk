@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -13,6 +13,10 @@ namespace ClearDesk
     internal sealed class TrayItem
     {
         public string Key, Name, Tooltip;
+        string raw; public string Raw { get { return raw ?? Name ?? ""; } set { raw = value; } }     // 2.3.6: the name UI Automation gave the icon (cleaned) — EMPTY for icons like QQ that have no tooltip; Name is then filled in from the program's own name
+        public int Ordinal;         // 2.3.6: n-th icon with this Raw name in its list (identifies it when several icons share a name or have none)
+        public string Exe;          // 2.3.6: the program, when Windows' own list of notification icons identified it
+        public byte[] Capture, Snapshot;    // 2.3.6: screen copy taken during this read / the PNG Windows keeps for the program
         public bool Overflow;
         public byte[] Png;          // the icon, copied from the screen when it was visible (UI Automation has no image)
     }
@@ -70,6 +74,13 @@ namespace ClearDesk
             catch { return new AutomationElement[0]; }
         }
 
+        /// <summary>2.3.6: every notification icon below root, found by its AutomationId (not by the button class, which differs between Windows builds), in document order.</summary>
+        static AutomationElement[] Icons(AutomationElement root)
+        {
+            try { return root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "NotifyItemIcon")).Cast<AutomationElement>().ToArray(); }
+            catch { return new AutomationElement[0]; }
+        }
+
         static bool IsAppIcon(AutomationElement e) { try { return e.Current.AutomationId == "NotifyItemIcon"; } catch { return false; } }
 
         static AutomationElement Chevron(AutomationElement tray)
@@ -90,25 +101,57 @@ namespace ClearDesk
 
         internal static bool Available { get { return Tray() != null; } }
 
-        static List<TrayItem> Read(AutomationElement root, bool overflow, bool capture)
+        internal struct RawIcon { public string Full; public byte[] Png; }
+
+        internal static bool TestNoIconCache;       // unit tests: Build() leaves the icon cache (which is saved to disk) alone
+        internal static void TestResetNamed() { lock (iconCache) { namedVisible = new List<string>(); namedHidden = new List<string>(); } }
+        static List<string> namedVisible = new List<string>(), namedHidden = new List<string>();
+
+        /// <summary>2.3.6: turns what UI Automation showed (names, possibly empty or identical) into items. NOTHING is dropped: an icon with an empty name (QQ) is kept and named after its program
+        /// (tooltip, else the exe's file description / product name, else the exe's file name, else 未命名图标). Two icons with the same name stay two items (Ordinal tells them apart).</summary>
+        internal static List<TrayItem> Build(IList<RawIcon> raws, bool overflow, List<NotifyEntry> entries)
         {
             var list = new List<TrayItem>(); var seen = new Dictionary<string, int>();
-            foreach (var b in Buttons(root))
+            foreach (var r in raws)
             {
-                if (!IsAppIcon(b)) continue;
-                string full; try { full = b.Current.Name ?? ""; } catch { continue; }
-                string name = Clean(full); if (name.Length == 0) continue;
-                int n; seen.TryGetValue(name, out n); seen[name] = n + 1;
-                var item = new TrayItem { Name = name, Tooltip = full.Trim(), Overflow = overflow, Key = (overflow ? "o:" : "v:") + name + "#" + n };
+                string raw = Clean(r.Full);
+                int n; seen.TryGetValue(raw, out n); seen[raw] = n + 1;
+                list.Add(new TrayItem { Raw = raw, Ordinal = n, Name = raw, Tooltip = (r.Full ?? "").Trim(), Overflow = overflow, Capture = r.Png });
+            }
+            var mine = list.Where(i => i.Raw.Length > 0).Select(i => i.Raw).ToList();
+            if (!TestNoIconCache) lock (iconCache) { if (overflow) namedHidden = mine; else namedVisible = mine; }
+            if (list.Any(i => i.Raw.Length == 0))
+            {
+                List<string> other; lock (iconCache) other = TestNoIconCache ? new List<string>() : overflow ? namedVisible : namedHidden;
+                try { TrayNames.Resolve(list, entries ?? TrayNames.Entries(), other); }
+                catch (Exception e) { Program.Log(e); int k = 0; foreach (var i in list.Where(x => x.Raw.Length == 0 && x.Name.Length == 0)) { k++; i.Name = "未命名图标 " + k; } }
+            }
+            foreach (var item in list)
+            {
+                item.Key = (overflow ? "o:" : "v:") + (item.Raw.Length > 0 ? item.Raw : "<无名称>") + "#" + item.Ordinal;
+                if (TestNoIconCache) { item.Png = item.Capture ?? item.Snapshot; continue; }
                 lock (iconCache)
                 {
-                    byte[] png; string ik = IconKey(name);
-                    if (capture && HitsItem(b)) { png = Capture(b); if (png != null) { byte[] old; if (!iconCache.TryGetValue(ik, out old) || old.Length != png.Length) iconsDirty = true; iconCache[ik] = png; } }
-                    if (iconCache.TryGetValue(ik, out png)) item.Png = png;
+                    byte[] png; string ik = IconKey(item.Name);
+                    if (item.Capture != null) { png = item.Capture; byte[] old; if (!iconCache.TryGetValue(ik, out old) || old.Length != png.Length) iconsDirty = true; iconCache[ik] = png; item.Png = png; }
+                    else if (iconCache.TryGetValue(ik, out png)) item.Png = png;
+                    else if (item.Snapshot != null) item.Png = item.Snapshot;
                 }
-                list.Add(item);
             }
             return list;
+        }
+
+        static List<TrayItem> Read(AutomationElement root, bool overflow, bool capture, bool captureUnnamed = false)
+        {
+            var raws = new List<RawIcon>();
+            foreach (var b in Icons(root))
+            {
+                string full; try { full = b.Current.Name ?? ""; } catch { continue; }
+                byte[] png = null;
+                if ((capture || (captureUnnamed && Clean(full).Length == 0)) && HitsItem(b)) png = Capture(b);
+                raws.Add(new RawIcon { Full = full, Png = png });
+            }
+            return Build(raws, overflow, null);
         }
 
         /// <summary>The icons on the taskbar itself (cheap, no side effects). Icons are only copied from the screen when they really are visible there.</summary>
@@ -127,15 +170,21 @@ namespace ClearDesk
         {
             lock (gate)
             {
-                var tray = Tray(); if (tray == null) return new List<TrayItem>();
-                List<TrayItem> list;
-                bool ours; var w = OpenOverflow(tray, out ours, true);
-                if (w == null) return new List<TrayItem>();
-                try { list = Read(w, true, false); }
-                finally { if (ours) CloseOverflow(tray); }
+                LastProblem = null;
+                var tray = Tray(); if (tray == null) { LastProblem = "找不到任务栏托盘"; return new List<TrayItem>(); }
+                List<TrayItem> list = null; bool ours; AutomationElement w = null;
+                for (int attempt = 0; attempt < 2 && w == null; attempt++)         // 2.3.6: one retry when the flyout does not come up
+                {
+                    LastProblem = null;
+                    w = OpenOverflow(tray, out ours, true);
+                    if (w == null) { Thread.Sleep(400); continue; }
+                    try { list = Read(w, true, false, capture); }
+                    finally { if (ours) CloseOverflow(tray); }
+                }
+                if (w == null || list == null) return new List<TrayItem>();
                 if (capture)
                 {
-                    var missing = list.Where(i => i.Png == null && imageTried.Add(IconKey(i.Name))).ToList();
+                    var missing = list.Where(i => i.Png == null && imageTried.Add(i.Key + "|" + IconKey(i.Name))).ToList();
                     if (missing.Count > 0)
                     {
                         VisiblePasses++;
@@ -163,12 +212,19 @@ namespace ClearDesk
                 try { ((InvokePattern)chevron.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); }
                 catch (Exception e) { LastProblem = "无法展开隐藏的图标：" + e.Message; return null; }
                 openedByUs = true; OverflowOpens++;
-                for (int i = 0; i < 70; i++)
+                // 2.3.6: wait until the flyout has icons AND their number has stopped changing (3 equal looks in a row), instead of taking the first look
+                int last = -1, same = 0;
+                for (int i = 0; i < 80; i++)
                 {
                     Thread.Sleep(50);
                     w = OverflowWindow();
-                    if (w != null && Buttons(w).Any(IsAppIcon)) { Thread.Sleep(120); return w; }
+                    if (w == null) { last = -1; same = 0; continue; }
+                    int c = Icons(w).Length;
+                    if (c > 0 && c == last) same++; else same = 0;
+                    last = c;
+                    if (c > 0 && same >= 2) { Thread.Sleep(60); return w; }
                 }
+                if (w != null && last > 0) return w;          // still changing after 4 s: take what is there
                 LastProblem = "隐藏的图标面板没有出现";
                 if (w != null || OverflowWindow() != null) CloseOverflow(tray);
                 return null;
@@ -187,15 +243,18 @@ namespace ClearDesk
             UiaCom.ResetFlyoutNow();                 // 2.3.5: only heals a leftover empty region (none is made any more)
         }
 
-        static AutomationElement Find(AutomationElement root, string name)
+        /// <summary>2.3.6: finds the icon by (name, ordinal): the n-th icon whose cleaned name is item.Raw (empty names included); when the order changed, the first with that name.</summary>
+        static AutomationElement Find(AutomationElement root, TrayItem item)
         {
-            foreach (var b in Buttons(root))
+            string raw = item.Raw ?? Clean(item.Name); int n = 0; AutomationElement first = null;
+            foreach (var b in Icons(root))
             {
-                if (!IsAppIcon(b)) continue;
                 string full; try { full = b.Current.Name ?? ""; } catch { continue; }
-                if (Clean(full) == name) return b;
+                if (Clean(full) != raw) continue;
+                if (n++ == item.Ordinal) return b;
+                if (first == null) first = b;
             }
-            return null;
+            return raw.Length > 0 ? first : null;
         }
 
         static AutomationElement TopOf(AutomationElement e)
@@ -290,12 +349,12 @@ namespace ClearDesk
             {
                 var tray = Tray(); if (tray == null) return "找不到任务栏托盘";
                 AutomationElement el = null; bool ours = false; bool inFlyout = false;
-                if (!item.Overflow) el = Find(tray, item.Name);
+                if (!item.Overflow) el = Find(tray, item);
                 if (el == null)
                 {
                     var w = OpenOverflow(tray, out ours, true);
-                    if (w != null) { el = Find(w, item.Name); inFlyout = el != null; }
-                    if (el == null && item.Overflow) el = Find(tray, item.Name);      // it was promoted onto the taskbar meanwhile
+                    if (w != null) { el = Find(w, item); inFlyout = el != null; }
+                    if (el == null && item.Overflow) el = Find(tray, item);      // it was promoted onto the taskbar meanwhile
                 }
                 if (el == null) { if (ours) CloseOverflow(tray); return "没有找到“" + item.Name + "”，应用可能已经退出"; }
                 string error = null;
@@ -304,7 +363,7 @@ namespace ClearDesk
                     if (mode == 1)
                     {
                         IntPtr root = inFlyout ? UiaCom.OverflowWindowHandle() : UiaCom.TrayWindow();
-                        error = UiaCom.ShowContextMenu(root, Clean(item.Name));
+                        error = UiaCom.ShowContextMenu(root, item.Raw ?? Clean(item.Name), item.Ordinal);
                         if (error == null) LastRightClickMethod = "UI Automation ShowContextMenu";
                         else
                         {

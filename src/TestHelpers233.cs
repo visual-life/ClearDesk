@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -51,7 +51,7 @@ namespace ClearDesk
             Application.EnableVisualStyles();
             var menu = new ContextMenuStrip(); var exit = new ToolStripMenuItem("退出（测试）");
             menu.Items.Add(exit);
-            var icon = new NotifyIcon { Icon = SystemIcons.Information, Text = tip.Length > 60 ? tip.Substring(0, 60) : tip, ContextMenuStrip = menu, Visible = true };
+            var icon = new NotifyIcon { Icon = SystemIcons.Information, Text = tip == "@empty" ? "" : tip.Length > 60 ? tip.Substring(0, 60) : tip, ContextMenuStrip = menu, Visible = true };
             var ctx = new ApplicationContext();
             Action<string> write = delegate (string s) { try { File.AppendAllText(log, s + Environment.NewLine); } catch { } };
             icon.MouseClick += delegate (object o, MouseEventArgs e) { if (e.Button == MouseButtons.Left) write("left"); };

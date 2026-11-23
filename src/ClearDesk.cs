@@ -158,6 +158,7 @@ namespace ClearDesk
             }
 
             if (args.Length > 0 && args[0] == "--flash-helper") { TestHelpers233.RunFlash(args); return; }       // 2.3.3: test helper — a window that flashes its taskbar button (isolated)
+            if (args.Length > 0 && args[0] == "--tray-diag236") { TrayNames.RunDiag(args); return; }          // 2.3.6: read-only dump of what the 托盘图标 page would list
             if (args.Length > 0 && args[0] == "--tray-helper") { TestHelpers233.RunTray(args); return; }         // 2.3.3: test helper — a program with its own tray icon (isolated)
             if (args.Length > 0 && args[0] == "--guard")
             {

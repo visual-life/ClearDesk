@@ -71,7 +71,7 @@ namespace ClearDesk
             {
                 if (CachePath == null || !File.Exists(CachePath)) return;
                 var rows = new JavaScriptSerializer().Deserialize<List<Dictionary<string, string>>>(File.ReadAllText(CachePath));
-                hidden = rows.Select((r, i) => new TrayItem { Name = r["Name"], Tooltip = r.ContainsKey("Tooltip") ? r["Tooltip"] : r["Name"], Overflow = true, Key = "o:" + r["Name"] + "#" + i, Png = string.IsNullOrEmpty(r["Png"]) ? null : Convert.FromBase64String(r["Png"]) }).ToList();
+                hidden = rows.Select((r, i) => new TrayItem { Name = r["Name"], Raw = r.ContainsKey("Raw") ? r["Raw"] : r["Name"], Ordinal = r.ContainsKey("Ordinal") ? int.Parse(r["Ordinal"]) : 0, Exe = r.ContainsKey("Exe") && r["Exe"].Length > 0 ? r["Exe"] : null, Tooltip = r.ContainsKey("Tooltip") ? r["Tooltip"] : r["Name"], Overflow = true, Key = "o:" + (r.ContainsKey("Raw") ? r["Raw"] : r["Name"]) + "#" + (r.ContainsKey("Ordinal") ? r["Ordinal"] : i.ToString()), Png = string.IsNullOrEmpty(r["Png"]) ? null : Convert.FromBase64String(r["Png"]) }).ToList();
             }
             catch (Exception e) { Program.Log(e); hidden = null; }
         }
@@ -82,7 +82,7 @@ namespace ClearDesk
             {
                 if (CachePath == null || hidden == null) return;
                 Directory.CreateDirectory(Path.GetDirectoryName(CachePath));
-                File.WriteAllText(CachePath, new JavaScriptSerializer().Serialize(hidden.Select(i => new Dictionary<string, string> { { "Name", i.Name }, { "Tooltip", i.Tooltip }, { "Png", i.Png == null ? "" : Convert.ToBase64String(i.Png) } }).ToList()));
+                File.WriteAllText(CachePath, new JavaScriptSerializer().Serialize(hidden.Select(i => new Dictionary<string, string> { { "Name", i.Name }, { "Raw", i.Raw ?? "" }, { "Ordinal", i.Ordinal.ToString() }, { "Exe", i.Exe ?? "" }, { "Tooltip", i.Tooltip }, { "Png", i.Png == null ? "" : Convert.ToBase64String(i.Png) } }).ToList()));
             }
             catch (Exception e) { Program.Log(e); }
         }
@@ -125,8 +125,8 @@ namespace ClearDesk
             visible = items; Task.Run(() => TrayAccess.SaveIcons(IconsPath));
             if (hidden != null)       // an icon that has been put on the taskbar is not hidden any more
             {
-                var names = new HashSet<string>(items.Select(i => i.Name));
-                if (hidden.RemoveAll(h => names.Contains(h.Name)) > 0) SaveCache();
+                var names = new HashSet<string>(items.Where(i => !string.IsNullOrEmpty(i.Raw)).Select(i => i.Raw));
+                if (hidden.RemoveAll(h => !string.IsNullOrEmpty(h.Raw) && names.Contains(h.Raw)) > 0) SaveCache();
             }
             Render(false);
         }
@@ -142,7 +142,8 @@ namespace ClearDesk
         internal void SetHidden(List<TrayItem> items, bool announce)
         {
             HiddenReads++;
-            if (items == null || (items.Count == 0 && TrayAccess.LastProblem != null && hidden == null)) { if (announce) Toast("\uE783", TrayAccess.LastProblem ?? "读取不到被收起的图标"); Render(true); return; }
+            if (items == null || (items.Count == 0 && TrayAccess.LastProblem != null)) {      // 2.3.6: a failed read never wipes what was read before
+                 if (announce) Toast("\uE783", TrayAccess.LastProblem ?? "读取不到被收起的图标"); Render(true); return; }
             hidden = items; hiddenAt = DateTime.UtcNow; SaveCache(); Task.Run(() => TrayAccess.SaveIcons(IconsPath)); Render(false);
         }
 
@@ -150,10 +151,10 @@ namespace ClearDesk
         internal List<TrayItem> Shown()
         {
             string scope = Program.S.TrayScope;
-            var names = new HashSet<string>(visible.Select(v => v.Name));
+            var names = new HashSet<string>(visible.Where(v => !string.IsNullOrEmpty(v.Raw)).Select(v => v.Raw));
             var all = new List<TrayItem>();
             if (scope != "hidden") all.AddRange(visible);
-            if (scope != "visible" && hidden != null) all.AddRange(hidden.Where(h => !names.Contains(h.Name)));
+            if (scope != "visible" && hidden != null) all.AddRange(hidden.Where(h => string.IsNullOrEmpty(h.Raw) || !names.Contains(h.Raw)));
             return all;
         }
 

@@ -100,15 +100,17 @@ namespace ClearDesk
         }
 
         /// <summary>Asks the shell to deliver the right click (context menu) of the icon called <paramref name="cleanName"/> to its program. Returns null when the shell accepted it, otherwise why not.</summary>
-        internal static string ShowContextMenu(IntPtr root, string cleanName)
+        internal static string ShowContextMenu(IntPtr root, string cleanName, int ordinal = 0)
         {
             string result = "没有找到图标“" + cleanName + "”";
             try
             {
                 try { AllowSetForegroundWindow(-1); } catch { }          // ASFW_ANY: the program that gets the click may bring its menu to the front
+                int seenSame = 0;
                 bool found = Walk(root, (e, id, name) =>
                 {
                     if (id != "NotifyItemIcon" || Clean(name) != cleanName) return false;
+                    if (seenSame++ != ordinal) return false;          // 2.3.6: the n-th icon with this name (also nameless ones)
                     try
                     {
                         var e3 = (IEl3_234)e;
